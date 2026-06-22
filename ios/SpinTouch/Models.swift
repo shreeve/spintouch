@@ -23,7 +23,9 @@ struct ParameterValue: Identifiable {
     var id: String { spec.key }
 
     var formattedValue: String {
-        String(format: "%.\(decimals)f", value)
+        // Honest, consistent per-metric precision (full precision is retained
+        // internally for calculations like LSI / combined chlorine).
+        MetricCatalog.format(value, key: spec.key)
     }
 
     var displayUnit: String { spec.unit ?? "" }

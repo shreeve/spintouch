@@ -1,6 +1,12 @@
 import SwiftUI
 import Charts
 
+/// Honest per-metric formatting, with a leading + for LSI.
+private func metricFormat(_ v: Double, _ key: String) -> String {
+    let s = MetricCatalog.format(v, key: key)
+    return (key == "lsi" && v >= 0) ? "+\(s)" : s
+}
+
 struct TrendsView: View {
     @ObservedObject var store: ReadingStore
     @Environment(\.dismiss) private var dismiss
@@ -76,7 +82,7 @@ private struct MetricRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(metric.name).font(.subheadline).bold()
                 if let v = series.last?.value {
-                    Text(format(v) + metric.unitSuffix)
+                    Text(metricFormat(v, metric.key) + metric.unitSuffix)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -84,11 +90,6 @@ private struct MetricRow: View {
             Sparkline(points: series, metric: metric)
                 .frame(width: 96, height: 34)
         }
-    }
-
-    private func format(_ v: Double) -> String {
-        if metric.key == "lsi" { return String(format: "%+.2f", v) }
-        return abs(v) >= 100 ? String(format: "%.0f", v) : String(format: "%.1f", v)
     }
 }
 
@@ -125,7 +126,7 @@ struct MetricDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if let v = series.last?.value {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(metric.key == "lsi" ? String(format: "%+.2f", v) : String(format: "%g", v))
+                        Text(metricFormat(v, metric.key))
                             .font(.system(size: 40, weight: .bold, design: .rounded))
                             .monospacedDigit()
                         Text(metric.unit ?? "").foregroundStyle(.secondary)
@@ -175,7 +176,7 @@ struct MetricDetailView: View {
                     Text(p.date.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Text(metric.key == "lsi" ? String(format: "%+.2f", p.value) : String(format: "%g", p.value))
+                    Text(metricFormat(p.value, metric.key))
                         .font(.callout).monospacedDigit().bold()
                 }
                 Divider()

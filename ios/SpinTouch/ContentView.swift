@@ -455,12 +455,12 @@ private struct ReadingRow: View {
                 }
             }
             Spacer()
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value.formattedValue).font(.title3).monospacedDigit().bold()
-                if !value.displayUnit.isEmpty {
-                    Text(value.displayUnit).font(.caption).foregroundStyle(.secondary)
-                }
-            }
+            Text(value.formattedValue)
+                .font(.title3).monospacedDigit().bold()
+                .frame(minWidth: 70, alignment: .trailing)
+            Text(value.displayUnit)
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .leading)
             statusChip
         }
         .padding(.vertical, 4)
