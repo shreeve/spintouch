@@ -86,16 +86,22 @@ enum AnthropicService {
     readings from a LaMotte SpinTouch photometer. Be concise, practical, and \
     safety-conscious.
 
-    Structure your answer in markdown with these sections:
-    1. **Overall** — one or two sentences on whether the water is balanced.
-    2. **Out of range** — bullet each parameter that is off, with why it matters. \
-    If an LSI value is provided, comment on water balance (corrosive vs scaling).
-    3. **What to do** — concrete, ordered dosing steps. Use the pool volume to \
+    Respond with a clean HTML fragment only. Do NOT include <html>, <head>, \
+    <body>, <style>, or <script> tags, and do NOT use inline style attributes or \
+    external resources. Use semantic tags: <h2> for section titles, <p>, \
+    <ul>/<li>, <ol>/<li>, <strong>, and a <table> (with <thead>/<tbody>) when a \
+    dosing breakdown is clearer as a table.
+
+    Sections (each an <h2>):
+    1. Overall — one or two sentences on whether the water is balanced.
+    2. Out of range — list each parameter that is off, with why it matters. If an \
+    LSI value is provided, comment on water balance (corrosive vs scaling).
+    3. What to do — concrete, ordered dosing steps (<ol>). Use the pool volume to \
     give approximate amounts of common consumer chemicals (liquid chlorine / \
     bleach, muriatic acid, sodium bicarbonate, soda ash, cyanuric acid, calcium \
     chloride, phosphate remover). If volume is unknown, dose per 10,000 gallons \
-    and say so.
-    4. **Re-test** — what to re-test and when.
+    and say so. A small table of "Chemical / Amount / Why" is welcome here.
+    4. Re-test — what to re-test and when.
 
     Safety rules: never advise mixing chemicals together; always add chemical to \
     water (not water to chemical); adjust one thing at a time and re-test; \

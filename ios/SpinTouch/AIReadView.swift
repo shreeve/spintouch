@@ -18,12 +18,8 @@ struct AIReadView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 case .done(let text):
-                    ScrollView {
-                        Text(markdown(text))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .textSelection(.enabled)
-                    }
+                    HTMLView(html: Markdown.html(from: text))
+                        .padding(.horizontal, 12)
 
                 case .failed(let message):
                     ScrollView {
@@ -71,10 +67,4 @@ struct AIReadView: View {
         }
     }
 
-    private func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(text)
-    }
 }
