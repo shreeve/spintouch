@@ -53,6 +53,8 @@ final class BLEManager: NSObject, ObservableObject {
     private var seen: Set<UUID> = []
     private var autoDisconnectTask: Task<Void, Never>?
     private let autoDisconnectDelaySeconds: UInt64 = 8
+    private var timeoutTask: Task<Void, Never>?
+    private let connectTimeoutSeconds: UInt64 = 30
 
     override init() {
         super.init()
@@ -79,9 +81,7 @@ final class BLEManager: NSObject, ObservableObject {
     func disconnect() {
         autoDisconnectTask?.cancel()
         if let p = peripheral { central.cancelPeripheralConnection(p) }
-        central.stopScan()
-        peripheral = nil
-        dataChar = nil; ackChar = nil; statusChar = nil
+        resetConnectionState()
         phase = .idle
     }
 
@@ -96,6 +96,44 @@ final class BLEManager: NSObject, ObservableObject {
         // UUID, so a service-filtered scan would miss it.
         addLog("Scanning (all devices, matching name \"SpinTouch\" or service)")
         central.scanForPeripherals(withServices: nil, options: nil)
+        startTimeout(connectTimeoutSeconds,
+                     "Couldn't find or connect to a SpinTouch. Make sure it's on a results screen and the LaMotte app is closed.")
+    }
+
+    /// Clear all connection references (used on terminal failures so a later scan
+    /// can connect again). Also stops scanning and cancels the connect timeout.
+    private func resetConnectionState() {
+        cancelTimeout()
+        central.stopScan()
+        peripheral = nil
+        dataChar = nil; ackChar = nil; statusChar = nil
+    }
+
+    /// True if the callback's peripheral is the one we're currently working with.
+    private func isCurrent(_ p: CBPeripheral) -> Bool {
+        peripheral?.identifier == p.identifier
+    }
+
+    private func startTimeout(_ seconds: UInt64, _ message: String) {
+        timeoutTask?.cancel()
+        timeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            switch self.phase {
+            case .scanning, .connecting, .discovering, .reading:
+                self.addLog("Timed out")
+                if let p = self.peripheral { self.central.cancelPeripheralConnection(p) }
+                self.resetConnectionState()
+                self.phase = .failed(message)
+            default:
+                break
+            }
+        }
+    }
+
+    private func cancelTimeout() {
+        timeoutTask?.cancel()
+        timeoutTask = nil
     }
 
     /// True if this advertisement looks like a SpinTouch.
@@ -170,6 +208,7 @@ extension BLEManager: CBCentralManagerDelegate {
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
+            guard isCurrent(peripheral) else { return }
             addLog("Connected — discovering services")
             phase = .discovering
             peripheral.discoverServices([SpinTouchUUID.service])
@@ -179,6 +218,8 @@ extension BLEManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager,
                                     didFailToConnect peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
+            guard isCurrent(peripheral) else { return }
+            resetConnectionState()
             phase = .failed(error?.localizedDescription ?? "Connection failed")
         }
     }
@@ -186,9 +227,13 @@ extension BLEManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager,
                                     didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
+            // Ignore disconnects from a stale peripheral (e.g. an old connection
+            // dropping after we've already moved on to a new one).
+            guard isCurrent(peripheral) else { return }
             addLog("Disconnected")
             self.peripheral = nil
             self.dataChar = nil; self.ackChar = nil; self.statusChar = nil
+            cancelTimeout()
             if case .gotReading = phase {
                 // Keep showing results.
             } else if let error {
@@ -205,8 +250,10 @@ extension BLEManager: CBCentralManagerDelegate {
 extension BLEManager: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         Task { @MainActor in
-            if let error { phase = .failed(error.localizedDescription); return }
+            guard isCurrent(peripheral) else { return }
+            if let error { resetConnectionState(); phase = .failed(error.localizedDescription); return }
             guard let service = peripheral.services?.first(where: { $0.uuid == SpinTouchUUID.service }) else {
+                resetConnectionState()
                 phase = .failed("SpinTouch service not found")
                 return
             }
@@ -218,7 +265,8 @@ extension BLEManager: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral,
                                 didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         Task { @MainActor in
-            if let error { phase = .failed(error.localizedDescription); return }
+            guard isCurrent(peripheral) else { return }
+            if let error { resetConnectionState(); phase = .failed(error.localizedDescription); return }
             for c in service.characteristics ?? [] {
                 switch c.uuid {
                 case SpinTouchUUID.status: statusChar = c
@@ -228,6 +276,7 @@ extension BLEManager: CBPeripheralDelegate {
                 }
             }
             guard let statusChar, let dataChar else {
+                resetConnectionState()
                 phase = .failed("Required characteristics missing")
                 return
             }
@@ -243,12 +292,17 @@ extension BLEManager: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral,
                                 didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         Task { @MainActor in
+            guard isCurrent(peripheral) else { return }
             if let error { addLog("Update error: \(error.localizedDescription)"); return }
 
             if characteristic.uuid == SpinTouchUUID.status {
                 let v = characteristic.value?.first ?? 0
                 addLog("Status notification: 0x\(String(format: "%02X", v))")
-                if phase != .reading, let dataChar { peripheral.readValue(for: dataChar) }
+                // Only kick off one read at a time.
+                if phase != .reading, let dataChar {
+                    phase = .reading
+                    peripheral.readValue(for: dataChar)
+                }
                 return
             }
 
@@ -256,6 +310,7 @@ extension BLEManager: CBPeripheralDelegate {
                 guard let value = characteristic.value else { return }
                 addLog("Received \(value.count) bytes")
                 if let parsed = SpinTouchParser.parse(value) {
+                    cancelTimeout()
                     self.reading = parsed
                     phase = .gotReading
                     addLog("Parsed: \(parsed.summaryLine)")
@@ -266,7 +321,10 @@ extension BLEManager: CBPeripheralDelegate {
                     scheduleAutoDisconnect()
                 } else {
                     addLog("Payload not a valid test report (\(value.count) bytes)")
-                    if phase == .reading { phase = .waitingForTest }
+                    if phase == .reading {
+                        cancelTimeout()
+                        phase = .waitingForTest
+                    }
                 }
             }
         }
@@ -276,6 +334,7 @@ extension BLEManager: CBPeripheralDelegate {
                                 didUpdateNotificationStateFor characteristic: CBCharacteristic,
                                 error: Error?) {
         Task { @MainActor in
+            guard isCurrent(peripheral) else { return }
             if characteristic.uuid == SpinTouchUUID.status, phase == .reading {
                 // remain reading; first read already issued
             } else if characteristic.uuid == SpinTouchUUID.status {

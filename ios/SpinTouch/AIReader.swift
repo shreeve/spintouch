@@ -11,11 +11,20 @@ enum AIReadState {
 final class AIReader: ObservableObject {
     @Published var state: AIReadState = .idle
 
+    private var currentRequestID = UUID()
+
+    var isLoading: Bool {
+        if case .loading = state { return true }
+        return false
+    }
+
     func run(reading: SpinTouchReading, settings: AppSettings) async {
         guard settings.hasAPIKey else {
             state = .failed("Add your Anthropic API key in Settings first.")
             return
         }
+        let requestID = UUID()
+        currentRequestID = requestID
         state = .loading
 
         // Snapshot everything off the main-actor-isolated settings here.
@@ -27,8 +36,10 @@ final class AIReader: ObservableObject {
             let text = try await AnthropicService.send(
                 apiKey: apiKey, model: model,
                 system: AnthropicService.systemPrompt, user: user)
+            guard currentRequestID == requestID else { return }
             state = .done(text)
         } catch {
+            guard currentRequestID == requestID else { return }
             state = .failed(error.localizedDescription)
         }
     }

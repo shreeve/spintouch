@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var showLog = false
     @State private var showSettings = false
     @State private var showAIRead = false
+    @State private var showAIDisclosure = false
     @State private var showTrends = false
     @State private var effectiveDate = Date()
     @FocusState private var tempFocused: Bool
@@ -18,6 +19,7 @@ struct ContentView: View {
                 VStack(spacing: 16) {
                     statusCard
                     if let reading = ble.reading {
+                        if !reading.endSignatureValid { unverifiedBanner }
                         if let lsi = currentLSI(reading) { lsiCard(lsi) }
                         resultsSection(reading)
                         conditionsCard
@@ -60,6 +62,12 @@ struct ContentView: View {
                 if let reading = ble.reading {
                     AIReadView(reading: reading, settings: settings, reader: aiReader)
                 }
+            }
+            .alert("AI Read", isPresented: $showAIDisclosure) {
+                Button("Continue") { settings.aiDisclosureAccepted = true; startAIRead() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("AI Read sends this reading and your pool settings/notes to Anthropic using your API key. Offline recommendations stay on-device.")
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
@@ -131,29 +139,59 @@ struct ContentView: View {
 
     private var aiReadPlaceholder: some View {
         Button {
-            guard let reading = ble.reading else { return }
-            showAIRead = true
-            Task { await aiReader.run(reading: reading, settings: settings) }
+            requestAIRead()
         } label: {
             HStack {
                 Image(systemName: "sparkles")
                 Text("Get AI Read").bold()
                 Spacer()
-                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                if aiReader.isLoading {
+                    ProgressView()
+                } else {
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }
             }
             .padding()
             .frame(maxWidth: .infinity)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .disabled(aiReader.isLoading)
+    }
+
+    private func requestAIRead() {
+        guard ble.reading != nil else { return }
+        if !settings.aiDisclosureAccepted {
+            showAIDisclosure = true
+            return
+        }
+        startAIRead()
+    }
+
+    private func startAIRead() {
+        guard let reading = ble.reading else { return }
+        showAIRead = true
+        Task { await aiReader.run(reading: reading, settings: settings) }
     }
 
     // MARK: - Persistence
 
     private func persistCurrent() {
-        guard let r = ble.reading else { return }
+        // Only save verified frames to history; unverified ones are shown but flagged.
+        guard let r = ble.reading, r.endSignatureValid else { return }
         store.upsert(reading: r, tempF: settings.waterTempValue,
                      date: effectiveDate, lsi: currentLSI(r)?.value)
+    }
+
+    private var unverifiedBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text("Unverified reading — the payload signature didn't match. Values may be incomplete and won't be saved to history.")
+                .font(.caption)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
     }
 
     // MARK: - LSI

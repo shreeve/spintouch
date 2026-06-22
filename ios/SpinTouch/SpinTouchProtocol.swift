@@ -201,7 +201,15 @@ enum SpinTouchParser {
         var comps = DateComponents()
         comps.year = year; comps.month = month; comps.day = day
         comps.hour = hour; comps.minute = minute; comps.second = second
-        return Calendar.current.date(from: comps)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        guard let date = calendar.date(from: comps) else { return nil }
+        // Reject impossible dates (e.g. Feb 31) by round-tripping the components.
+        let check = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        guard check.year == year, check.month == month, check.day == day,
+              check.hour == hour, check.minute == minute, check.second == second else { return nil }
+        return date
     }
 
     private static func deriveValues(from params: [ParameterValue]) -> [ParameterValue] {
@@ -226,12 +234,15 @@ enum SpinTouchParser {
     }
 
     private static func autoDetectSeries(_ ids: Set<UInt8>) -> String? {
+        // Heuristic fallback used only when device metadata (disk index) is
+        // absent. Mirrors the proven Home Assistant reference: 0x0E is the
+        // phosphate param-id whose presence/absence distinguishes 203/204 vs 303.
         let hasChlorine = ids.contains(0x01) || ids.contains(0x02)
         let hasBromine = ids.contains(0x03)
-        let hasBorate0E = ids.contains(0x0E)
+        let hasPhosphate = ids.contains(0x0E)
         if hasBromine { return "203" }
-        if hasChlorine && !hasBorate0E { return "303" }
-        if hasBorate0E && !hasChlorine && !hasBromine { return "204" }
+        if hasChlorine && !hasPhosphate { return "303" }
+        if hasPhosphate && !hasChlorine && !hasBromine { return "204" }
         if hasChlorine { return "303" }
         return nil
     }

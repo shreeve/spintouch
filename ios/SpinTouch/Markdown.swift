@@ -17,14 +17,21 @@ enum Markdown {
         return document(body: inner)
     }
 
-    /// Strip scripts and inline event handlers. JavaScript is also disabled in
-    /// the web view, so this is defense-in-depth.
+    /// Treat model HTML as untrusted: strip scripts, dangerous tags, inline
+    /// event handlers, and unsafe URL schemes. Combined with a strict CSP and
+    /// JavaScript disabled in the web view, this is defense-in-depth.
     private static func sanitize(_ html: String) -> String {
         var s = html
-        s = s.replacing(/(?is)<script\b[\s\S]*?<\/script>/) { _ in "" }
+        // Remove dangerous tags entirely (with their content where it matters).
+        s = s.replacing(/(?is)<\s*(script|style)\b[\s\S]*?<\s*\/\s*\1\s*>/) { _ in "" }
+        s = s.replacing(/(?is)<\s*\/?\s*(script|style|iframe|object|embed|form|meta|link|base|svg|audio|video|source)\b[^>]*>/) { _ in "" }
+        // Inline event handlers (onload=, onclick=, ...).
         s = s.replacing(/(?i)\son[a-z]+\s*=\s*"[^"]*"/) { _ in "" }
         s = s.replacing(/(?i)\son[a-z]+\s*=\s*'[^']*'/) { _ in "" }
-        s = s.replacing(/(?i)javascript:/) { _ in "#" }
+        s = s.replacing(/(?i)\son[a-z]+\s*=\s*[^\s>]+/) { _ in "" }
+        // Unsafe URL schemes in any href/src attribute.
+        s = s.replacing(/(?i)\s(href|src)\s*=\s*"\s*(javascript|data|file|vbscript):[^"]*"/) { _ in "" }
+        s = s.replacing(/(?i)\s(href|src)\s*=\s*'\s*(javascript|data|file|vbscript):[^']*'/) { _ in "" }
         return s
     }
 
@@ -85,7 +92,11 @@ enum Markdown {
 
     private static func inlineFmt(_ input: String) -> String {
         var s = input
-        s = s.replacing(/\[([^\]]+)\]\(([^)]+)\)/) { "<a href=\"\($0.output.2)\">\($0.output.1)</a>" }
+        s = s.replacing(/\[([^\]]+)\]\(([^)]+)\)/) { m in
+            let url = String(m.output.2)
+            guard url.hasPrefix("http://") || url.hasPrefix("https://") else { return String(m.output.1) }
+            return "<a href=\"\(url.replacingOccurrences(of: "\"", with: "&quot;"))\">\(m.output.1)</a>"
+        }
         s = s.replacing(/`([^`]+)`/) { "<code>\($0.output.1)</code>" }
         s = s.replacing(/\*\*([^*]+)\*\*/) { "<strong>\($0.output.1)</strong>" }
         s = s.replacing(/_([^_]+)_/) { "<em>\($0.output.1)</em>" }
@@ -98,6 +109,7 @@ enum Markdown {
         <html>
         <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; media-src 'none'; frame-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
         <style>
           :root { color-scheme: light dark; }
           html, body { background: transparent; }

@@ -13,7 +13,9 @@ struct StoredReading: Codable, Identifiable {
     var values: [String: Double]   // metric key -> value
 
     init(reading: SpinTouchReading, tempF: Double?, date: Date, lsi: Double?) {
-        self.identityKey = ISO8601DateFormatter().string(from: reading.reportTime ?? reading.receivedAt)
+        // Identity is the raw frame: identical frames (a re-scan of the same
+        // physical result) dedupe; distinct tests never collide.
+        self.identityKey = reading.rawHex
         self.date = date
         self.receivedAt = reading.receivedAt
         self.diskSeries = reading.diskSeries
@@ -40,11 +42,13 @@ final class ReadingStore: ObservableObject {
     @Published private(set) var readings: [StoredReading] = []
 
     private let fileURL: URL
+    private let persistQueue = DispatchQueue(label: "com.shreeve.SpinTouch.readingstore")
 
     init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        fileURL = dir.appendingPathComponent("readings.json")
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        fileURL = base.appendingPathComponent("readings.json")
         load()
     }
 
@@ -90,11 +94,17 @@ final class ReadingStore: ObservableObject {
     }
 
     private func save() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(readings) {
-            try? data.write(to: fileURL, options: .atomic)
+        // Snapshot on the main actor, then encode + write on a serial queue so
+        // writes are ordered (no out-of-order/stale persistence) and never block UI.
+        let snapshot = readings
+        let url = fileURL
+        persistQueue.async {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(snapshot) {
+                try? data.write(to: url, options: .atomic)
+            }
         }
     }
 
@@ -126,7 +136,7 @@ final class ReadingStore: ObservableObject {
             ]
             for key in MetricCatalog.csvKeys {
                 if let v = r.metricValue(key) {
-                    cols.append(String(format: "%g", v))
+                    cols.append(String(format: "%g", locale: Self.posix, v))
                 } else {
                     cols.append("")
                 }
@@ -140,6 +150,8 @@ final class ReadingStore: ObservableObject {
         try csv.data(using: .utf8)!.write(to: url, options: .atomic)
         return url
     }
+
+    private static let posix = Locale(identifier: "en_US_POSIX")
 
     private func csvEscape(_ s: String) -> String {
         if s.contains(",") || s.contains("\"") || s.contains("\n") {
