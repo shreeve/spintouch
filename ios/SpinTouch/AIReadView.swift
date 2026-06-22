@@ -26,18 +26,32 @@ struct AIReadView: View {
                     }
 
                 case .failed(let message):
-                    VStack(spacing: 14) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.largeTitle).foregroundStyle(.orange)
-                        Text(message)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal)
-                        Button("Try Again") { Task { await reader.run(reading: reading, settings: settings) } }
-                            .buttonStyle(.borderedProminent)
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.largeTitle).foregroundStyle(.orange)
+                            Text(message)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal)
+                            Button("Try Again") { Task { await reader.run(reading: reading, settings: settings) } }
+                                .buttonStyle(.borderedProminent)
+
+                            let advice = Recommendations.evaluate(reading)
+                            if !advice.isEmpty {
+                                Divider().padding(.vertical, 4)
+                                Text("Offline recommendations").font(.headline)
+                                ForEach(advice) { a in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(a.title).font(.subheadline).bold()
+                                        Text(a.detail).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                        .padding()
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
                 }
             }
             .navigationTitle("AI Read")

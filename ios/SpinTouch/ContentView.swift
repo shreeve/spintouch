@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showAIRead = false
     @State private var showTrends = false
     @State private var effectiveDate = Date()
+    @FocusState private var tempFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -20,6 +21,7 @@ struct ContentView: View {
                         if let lsi = currentLSI(reading) { lsiCard(lsi) }
                         resultsSection(reading)
                         conditionsCard
+                        recommendationsCard(reading)
                         aiReadPlaceholder
                         metadataCard(reading)
                     } else {
@@ -28,6 +30,7 @@ struct ContentView: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: ble.reading?.receivedAt) { _, _ in
                 if let r = ble.reading { effectiveDate = r.reportTime ?? r.receivedAt }
                 persistCurrent()
@@ -44,6 +47,10 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showLog.toggle() } label: { Image(systemName: "doc.text.magnifyingglass") }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { tempFocused = false }
                 }
             }
             .sheet(isPresented: $showLog) { logSheet }
@@ -73,6 +80,15 @@ struct ContentView: View {
                 Text(ble.phase.label).font(.subheadline).bold()
                 if let name = ble.deviceName {
                     Text(name).font(.caption).foregroundStyle(.secondary)
+                }
+                if let reading = ble.reading {
+                    if let summary = reading.qualitySummary {
+                        Text("Out of range: \(summary)")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else {
+                        Text("All measured parameters in range")
+                            .font(.caption).foregroundStyle(.green)
+                    }
                 }
             }
             Spacer()
@@ -180,6 +196,35 @@ struct ContentView: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    // MARK: - Recommendations (offline)
+
+    @ViewBuilder
+    private func recommendationsCard(_ reading: SpinTouchReading) -> some View {
+        let advice = Recommendations.evaluate(reading)
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Recommendations", systemImage: "checklist")
+                .font(.headline)
+            if advice.isEmpty {
+                Label("All measured parameters look in range.", systemImage: "checkmark.seal.fill")
+                    .font(.subheadline).foregroundStyle(.green)
+            } else {
+                ForEach(advice) { a in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: a.severity == .critical ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
+                            .foregroundStyle(a.severity == .critical ? .red : .orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(a.title).font(.subheadline).bold()
+                            Text(a.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
     // MARK: - Conditions (temperature + date)
 
     private var conditionsCard: some View {
@@ -191,6 +236,7 @@ struct ContentView: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 60)
+                    .focused($tempFocused)
                 Text("°F").foregroundStyle(.secondary)
             }
             Divider()
@@ -210,7 +256,20 @@ struct ContentView: View {
             if let report = reading.reportTime {
                 metaRow("Report time", report.formatted(date: .abbreviated, time: .shortened))
             }
-            metaRow("Received", reading.receivedAt.formatted(date: .omitted, time: .standard))
+            let effective = reading.reportTime ?? reading.receivedAt
+            let age = Date().timeIntervalSince(effective)
+            HStack {
+                Text("Test age").foregroundStyle(.secondary)
+                Spacer()
+                Text(effective.formatted(.relative(presentation: .named))).bold()
+                if age > 3 * 24 * 3600 {
+                    Text("STALE")
+                        .font(.caption2).bold()
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.orange.opacity(0.18), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+            }
         }
         .font(.caption)
         .padding()
@@ -232,7 +291,7 @@ struct ContentView: View {
                 .font(.system(size: 44))
                 .foregroundStyle(.blue.gradient)
             Text("No results yet").font(.headline)
-            Text("Power on the SpinTouch, run a test, and keep it on the results screen. Then tap Scan.")
+            Text("Power on the SpinTouch, run a test, and keep it on the results screen. Close the LaMotte app if it's open, then tap Scan.")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -281,6 +340,10 @@ struct ContentView: View {
                         Text("Raw payload").font(.caption).bold()
                         Text(hex).font(.system(.caption2, design: .monospaced))
                             .textSelection(.enabled)
+                        if ble.reading?.endSignatureValid == false {
+                            Text("⚠︎ End signature mismatch (payload may be truncated)")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
                     }
                 }
                 .padding()
@@ -288,11 +351,29 @@ struct ContentView: View {
             .navigationTitle("BLE Log")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    ShareLink(item: logExportText) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(ble.log.isEmpty)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { showLog = false }
                 }
             }
         }
+    }
+
+    private var logExportText: String {
+        var s = "SpinTouch BLE Log\n"
+        s += ble.log.joined(separator: "\n")
+        if let hex = ble.reading?.rawHex {
+            s += "\n\nRaw payload (\(hex.count / 2) bytes):\n\(hex)"
+            if ble.reading?.endSignatureValid == false {
+                s += "\n⚠︎ End signature mismatch (payload may be truncated)"
+            }
+        }
+        return s
     }
 }
 

@@ -113,8 +113,10 @@ enum AnthropicService {
         } else {
             lines.append("Pool volume: unknown (dose per 10,000 gallons).")
         }
-        let notes = settings.poolType.trimmingCharacters(in: .whitespaces)
-        if !notes.isEmpty { lines.append("Pool type/notes: \(notes).") }
+        let type = settings.poolType.trimmingCharacters(in: .whitespaces)
+        if !type.isEmpty { lines.append("Pool type (user-set): \(type).") }
+        let notes = settings.poolNotes.trimmingCharacters(in: .whitespaces)
+        if !notes.isEmpty { lines.append("Notes: \(notes).") }
         if let temp = settings.waterTempValue {
             lines.append("Water temperature: \(Int(temp.rounded())) °F.")
         }

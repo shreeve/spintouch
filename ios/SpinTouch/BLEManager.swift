@@ -51,6 +51,8 @@ final class BLEManager: NSObject, ObservableObject {
 
     private var wantsScan = false
     private var seen: Set<UUID> = []
+    private var autoDisconnectTask: Task<Void, Never>?
+    private let autoDisconnectDelaySeconds: UInt64 = 8
 
     override init() {
         super.init()
@@ -60,6 +62,7 @@ final class BLEManager: NSObject, ObservableObject {
     // MARK: - Public control
 
     func startScan() {
+        autoDisconnectTask?.cancel()
         reading = nil
         switch central.state {
         case .poweredOn:
@@ -74,6 +77,7 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        autoDisconnectTask?.cancel()
         if let p = peripheral { central.cancelPeripheralConnection(p) }
         central.stopScan()
         peripheral = nil
@@ -255,7 +259,11 @@ extension BLEManager: CBPeripheralDelegate {
                     self.reading = parsed
                     phase = .gotReading
                     addLog("Parsed: \(parsed.summaryLine)")
+                    if value.count >= 91 && parsed.endSignatureValid == false {
+                        addLog("⚠︎ End signature mismatch (payload may be truncated)")
+                    }
                     sendAck()
+                    scheduleAutoDisconnect()
                 } else {
                     addLog("Payload not a valid test report (\(value.count) bytes)")
                     if phase == .reading { phase = .waitingForTest }
@@ -280,5 +288,19 @@ extension BLEManager: CBPeripheralDelegate {
         guard let peripheral, let ackChar else { return }
         addLog("Sending ACK (0x01)")
         peripheral.writeValue(Data([0x01]), for: ackChar, type: .withResponse)
+    }
+
+    /// Disconnect shortly after a reading so the SpinTouch is free for the LaMotte
+    /// app / its own UI. The parsed reading stays on screen because the disconnect
+    /// handler preserves it while phase == .gotReading.
+    private func scheduleAutoDisconnect() {
+        autoDisconnectTask?.cancel()
+        autoDisconnectTask = Task { @MainActor [weak self] in
+            let delay = (self?.autoDisconnectDelaySeconds ?? 8) * 1_000_000_000
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, !Task.isCancelled, let p = self.peripheral else { return }
+            self.addLog("Auto-disconnecting to free the device for the LaMotte app")
+            self.central.cancelPeripheralConnection(p)
+        }
     }
 }

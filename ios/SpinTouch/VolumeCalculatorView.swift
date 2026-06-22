@@ -19,6 +19,7 @@ struct VolumeCalculatorView: View {
     @State private var width = ""    // ft (diameter for round)
     @State private var shallow = ""  // ft
     @State private var deep = ""     // ft
+    @FocusState private var fieldFocused: Bool
 
     private let gallonsPerCubicFoot = 7.48052
 
@@ -94,6 +95,10 @@ struct VolumeCalculatorView: View {
                     }
                     .disabled(gallons == nil)
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { fieldFocused = false }
+                }
             }
         }
     }
@@ -106,6 +111,7 @@ struct VolumeCalculatorView: View {
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 80)
+                .focused($fieldFocused)
             Text("ft").foregroundStyle(.secondary)
         }
     }

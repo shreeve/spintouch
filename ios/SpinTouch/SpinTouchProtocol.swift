@@ -31,6 +31,12 @@ struct ParamSpec: Identifiable {
     let sortOrder: Int
 
     var id: String { key }
+
+    /// Optional/disk- or pool-dependent parameters: a ~0 reading means "not in
+    /// use", not "too low". Used to suppress a misleading LOW status.
+    var suppressLowWhenZero: Bool {
+        ["bromine", "cyanuric_acid", "salt", "borate"].contains(key)
+    }
 }
 
 enum SpinTouchCatalog {
@@ -61,7 +67,7 @@ enum SpinTouchCatalog {
         add(ParamSpec(paramID: 0x0D, key: "borate", name: "Borate", unit: "ppm",
                       decimals: 1, minValid: 0, maxValid: 100, idealLow: 30, idealHigh: 50, sortOrder: 11))
         add(ParamSpec(paramID: 0x0E, key: "phosphate", name: "Phosphate", unit: "ppb",
-                      decimals: 0, minValid: 0, maxValid: 2500, idealLow: 0, idealHigh: 100, sortOrder: 12))
+                      decimals: 0, minValid: 0, maxValid: 2500, idealLow: 0, idealHigh: 500, sortOrder: 12))
         add(ParamSpec(paramID: 0x0F, key: "calcium", name: "Calcium Hardness", unit: "ppm",
                       decimals: 1, minValid: 0, maxValid: 1200, idealLow: 200, idealHigh: 400, sortOrder: 5))
         add(ParamSpec(paramID: 0x10, key: "salt", name: "Salt", unit: "ppm",
@@ -138,6 +144,12 @@ enum SpinTouchParser {
 
         let reportTime = parseTimestamp(bytes)
 
+        let endSignatureValid: Bool = {
+            let o = Layout.endSignatureOffset
+            guard bytes.count >= o + 4 else { return false }
+            return Array(bytes[o..<o + 4]) == Layout.endSignature
+        }()
+
         // Collapse duplicate keys (calcium 0x08/0x0F) keeping first occurrence,
         // then sort by display order.
         var seen = Set<String>()
@@ -154,7 +166,8 @@ enum SpinTouchParser {
             numValidResults: numValid,
             reportTime: reportTime,
             receivedAt: Date(),
-            rawHex: data.map { String(format: "%02X", $0) }.joined()
+            rawHex: data.map { String(format: "%02X", $0) }.joined(),
+            endSignatureValid: endSignatureValid
         )
     }
 

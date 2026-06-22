@@ -28,7 +28,7 @@ enum MetricCatalog {
         Metric(key: "salt", name: "Salt", unit: "ppm", idealLow: 2700, idealHigh: 3400),
         Metric(key: "copper", name: "Copper", unit: "ppm", idealLow: 0, idealHigh: 0.3),
         Metric(key: "iron", name: "Iron", unit: "ppm", idealLow: 0, idealHigh: 0.3),
-        Metric(key: "phosphate", name: "Phosphate", unit: "ppb", idealLow: 0, idealHigh: 100),
+        Metric(key: "phosphate", name: "Phosphate", unit: "ppb", idealLow: 0, idealHigh: 500),
         Metric(key: "borate", name: "Borate", unit: "ppm", idealLow: 30, idealHigh: 50),
     ]
 

@@ -11,18 +11,24 @@ final class AppSettings: ObservableObject {
 
     @AppStorage_ var poolVolumeGallons: String
     @AppStorage_ var poolType: String
+    @AppStorage_ var poolNotes: String
     @AppStorage_ var model: String
     @AppStorage_ var waterTempF: String
 
     static let keyKeychain = "anthropic_api_key"
     static let defaultModel = "claude-sonnet-4-5"
+    static let poolTypeOptions = ["Chlorine", "Saltwater", "Bromine", "Biguanide", "Other"]
 
     init() {
         apiKey = Keychain.get(Self.keyKeychain) ?? ""
         _poolVolumeGallons = AppStorage_(key: "poolVolumeGallons", default: "")
-        _poolType = AppStorage_(key: "poolType", default: "Chlorine pool")
+        _poolType = AppStorage_(key: "poolType", default: "Chlorine")
+        _poolNotes = AppStorage_(key: "poolNotes", default: "")
         _model = AppStorage_(key: "anthropicModel", default: Self.defaultModel)
         _waterTempF = AppStorage_(key: "waterTempF", default: "")
+
+        // Migrate any earlier free-text pool type to a known option.
+        if !Self.poolTypeOptions.contains(poolType) { poolType = "Chlorine" }
     }
 
     var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }

@@ -4,6 +4,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var showVolumeCalc = false
+    @FocusState private var volumeFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -26,6 +27,7 @@ struct SettingsView: View {
                         TextField("e.g. 15000", text: $settings.poolVolumeGallons)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
+                            .focused($volumeFocused)
                         Text("gal").foregroundStyle(.secondary)
                     }
                     Button {
@@ -33,7 +35,10 @@ struct SettingsView: View {
                     } label: {
                         Label("Calculate from dimensions", systemImage: "ruler")
                     }
-                    TextField("Type / notes (e.g. saltwater, spa)", text: $settings.poolType)
+                    Picker("Type", selection: $settings.poolType) {
+                        ForEach(AppSettings.poolTypeOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    TextField("Notes (e.g. spa, plaster, screen enclosure)", text: $settings.poolNotes)
                 }
 
                 Section {
@@ -51,6 +56,10 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { volumeFocused = false }
                 }
             }
             .sheet(isPresented: $showVolumeCalc) {
