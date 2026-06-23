@@ -17,6 +17,23 @@ enum Markdown {
         return document(body: inner)
     }
 
+    /// A readable plain-text projection of (possibly partial) HTML, used for the
+    /// live streaming preview before the final formatted render.
+    static func plainText(fromHTML html: String) -> String {
+        var t = html
+        t = t.replacing(/(?i)<\s*li[^>]*>/) { _ in "\n• " }
+        t = t.replacing(/(?i)<\s*(br|\/p|\/h[1-6]|\/li|\/tr|\/table|\/ul|\/ol)\s*\/?>/) { _ in "\n" }
+        t = t.replacing(/<[^>]+>/) { _ in "" }
+        t = t.replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+        // Collapse 3+ blank lines.
+        t = t.replacing(/\n{3,}/) { _ in "\n\n" }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Treat model HTML as untrusted: strip scripts, dangerous tags, inline
     /// event handlers, and unsafe URL schemes. Combined with a strict CSP and
     /// JavaScript disabled in the web view, this is defense-in-depth.

@@ -35,6 +35,28 @@ struct StoredReading: Codable, Identifiable {
         default: return values[key]
         }
     }
+
+    /// Rebuild a displayable reading from this stored snapshot (for browsing
+    /// history with the same UI). Read-only; specs are synthesized from the
+    /// metric catalog.
+    func reconstructedReading() -> SpinTouchReading {
+        let derivedKeys: Set<String> = ["combined_chlorine", "fc_cya_ratio"]
+        var params: [ParameterValue] = []
+        var derived: [ParameterValue] = []
+        for (i, metric) in MetricCatalog.chemistry.enumerated() {
+            guard let v = values[metric.key] else { continue }
+            let spec = ParamSpec(paramID: 0, key: metric.key, name: metric.name, unit: metric.unit,
+                                 decimals: metric.decimals, minValid: -1e9, maxValid: 1e9,
+                                 idealLow: metric.idealLow, idealHigh: metric.idealHigh, sortOrder: i)
+            let pv = ParameterValue(spec: spec, value: v, decimals: metric.decimals)
+            if derivedKeys.contains(metric.key) { derived.append(pv) } else { params.append(pv) }
+        }
+        return SpinTouchReading(
+            parameters: params, derived: derived,
+            diskSeries: diskSeries, sanitizer: sanitizer,
+            numValidResults: params.count, reportTime: date, receivedAt: receivedAt,
+            rawHex: identityKey, endSignatureValid: true)
+    }
 }
 
 @MainActor
@@ -63,6 +85,22 @@ final class ReadingStore: ObservableObject {
         } else {
             readings.append(rec)
         }
+        readings.sort { $0.date < $1.date }
+        save()
+    }
+
+    /// Edit a stored reading's temperature and/or collection date, recomputing
+    /// LSI and re-sorting (collection date can change order).
+    func updateConditions(identityKey: String, tempF: Double?, date: Date) {
+        guard let i = readings.firstIndex(where: { $0.identityKey == identityKey }) else { return }
+        var e = readings[i]
+        e.tempF = tempF
+        e.date = date
+        e.lsi = LSI.compute(
+            ph: e.values["ph"], calcium: e.values["calcium"],
+            alkalinity: e.values["alkalinity"], cya: e.values["cyanuric_acid"],
+            tempF: tempF, salt: e.values["salt"])?.value
+        readings[i] = e
         readings.sort { $0.date < $1.date }
         save()
     }

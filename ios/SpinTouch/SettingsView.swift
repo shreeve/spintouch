@@ -2,8 +2,10 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
+    var onClearAICache: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var showVolumeCalc = false
+    @State private var cacheCleared = false
     @FocusState private var volumeFocused: Bool
 
     var body: some View {
@@ -49,6 +51,19 @@ struct SettingsView: View {
                     Text("Model")
                 } footer: {
                     Text("If you get a model error, set this to a valid Anthropic model id.")
+                }
+
+                Section {
+                    Button {
+                        onClearAICache?()
+                        cacheCleared = true
+                    } label: {
+                        Label(cacheCleared ? "AI Read Cache Cleared" : "Clear AI Read Cache",
+                              systemImage: cacheCleared ? "checkmark.circle" : "trash")
+                    }
+                    .disabled(cacheCleared)
+                } footer: {
+                    Text("AI reads are cached per unique set of inputs (values, temperature, pool settings) so identical reads are instant and don't re-bill.")
                 }
             }
             .navigationTitle("Settings")

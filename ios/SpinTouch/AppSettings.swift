@@ -17,7 +17,7 @@ final class AppSettings: ObservableObject {
     private var loaded = false
 
     static let keyKeychain = "anthropic_api_key"
-    static let defaultModel = "claude-sonnet-4-5"
+    static let defaultModel = "claude-haiku-4-5"
     static let poolTypeOptions = ["Chlorine", "Saltwater", "Bromine", "Biguanide", "Other"]
 
     init() {
@@ -33,6 +33,12 @@ final class AppSettings: ObservableObject {
 
         // Migrate any earlier free-text pool type to a known option.
         if !Self.poolTypeOptions.contains(poolType) { poolType = "Chlorine" }
+        // One-time migration of the prior (slower) default model to Haiku, so a
+        // later *explicit* Sonnet choice is preserved rather than re-downgraded.
+        if !d.bool(forKey: "didMigrateModelDefault") {
+            if model == "claude-sonnet-4-5" { model = Self.defaultModel }
+            d.set(true, forKey: "didMigrateModelDefault")
+        }
         // Re-save a legacy (serviceless) key under the new service-scoped item.
         if !apiKey.isEmpty { Keychain.set(apiKey, for: Self.keyKeychain) }
     }

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AIReadView: View {
     let reading: SpinTouchReading
+    let collectionDate: Date
+    let tempF: Double?
     @ObservedObject var settings: AppSettings
     @ObservedObject var reader: AIReader
     @Environment(\.dismiss) private var dismiss
@@ -17,6 +19,20 @@ struct AIReadView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                case .streaming(let partial):
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            Text(Markdown.plainText(fromHTML: partial))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .textSelection(.enabled)
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                        .onChange(of: partial) { _, _ in
+                            withAnimation(.linear(duration: 0.1)) { proxy.scrollTo("end", anchor: .bottom) }
+                        }
+                    }
+
                 case .done(let text):
                     HTMLView(html: Markdown.html(from: text))
                         .padding(.horizontal, 12)
@@ -30,7 +46,7 @@ struct AIReadView: View {
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal)
-                            Button("Try Again") { Task { await reader.run(reading: reading, settings: settings) } }
+                            Button("Try Again") { reader.start(reading: reading, settings: settings, collectionDate: collectionDate, tempF: tempF) }
                                 .buttonStyle(.borderedProminent)
 
                             let advice = Recommendations.evaluate(reading)

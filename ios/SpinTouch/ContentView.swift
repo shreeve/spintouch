@@ -10,21 +10,26 @@ struct ContentView: View {
     @State private var showAIRead = false
     @State private var showAIDisclosure = false
     @State private var showTrends = false
-    @State private var effectiveDate = Date()
+    @State private var selectedKey: String?       // identityKey of the displayed stored reading
+    @State private var editTemp = ""
+    @State private var editDate = Date()
     @FocusState private var tempFocused: Bool
+
+    private static let lastViewedKeyDefault = "lastViewedKey"
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     statusCard
-                    if let reading = ble.reading {
+                    if let reading = displayReading {
+                        if isStored { historyNavBar }
                         if !reading.endSignatureValid { unverifiedBanner }
-                        if let lsi = currentLSI(reading) { lsiCard(lsi) }
+                        if let lsi = displayLSI(reading) { lsiCard(lsi) }
                         resultsSection(reading)
-                        conditionsCard
+                        if isStored { conditionsCard }
                         recommendationsCard(reading)
-                        aiReadPlaceholder
+                        if isStored { aiReadPlaceholder }
                         metadataCard(reading)
                     } else {
                         emptyState
@@ -33,12 +38,10 @@ struct ContentView: View {
                 .padding()
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: ble.reading?.receivedAt) { _, _ in
-                if let r = ble.reading { effectiveDate = r.reportTime ?? r.receivedAt }
-                persistCurrent()
-            }
-            .onChange(of: settings.waterTempF) { _, _ in persistCurrent() }
-            .onChange(of: effectiveDate) { _, _ in persistCurrent() }
+            .onAppear { restoreSelection() }
+            .onChange(of: ble.reading?.receivedAt) { _, _ in handleScan() }
+            .onChange(of: editTemp) { _, _ in pushConditions() }
+            .onChange(of: editDate) { _, _ in pushConditions() }
             .navigationTitle("SpinTouch")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -57,10 +60,13 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showLog) { logSheet }
             .sheet(isPresented: $showTrends) { TrendsView(store: store) }
-            .sheet(isPresented: $showSettings) { SettingsView(settings: settings) }
+            .sheet(isPresented: $showSettings) {
+                SettingsView(settings: settings, onClearAICache: { aiReader.clearCache() })
+            }
             .sheet(isPresented: $showAIRead) {
-                if let reading = ble.reading {
-                    AIReadView(reading: reading, settings: settings, reader: aiReader)
+                if let s = selectedStored {
+                    AIReadView(reading: s.reconstructedReading(), collectionDate: s.date,
+                               tempF: s.tempF, settings: settings, reader: aiReader)
                 }
             }
             .alert("AI Read", isPresented: $showAIDisclosure) {
@@ -71,6 +77,147 @@ struct ContentView: View {
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
+    }
+
+    // MARK: - Displayed reading (browsed history or an unverified live scan)
+
+    /// An unverified live scan is shown transiently but never persisted.
+    private var liveUnverified: SpinTouchReading? {
+        if let r = ble.reading, !r.endSignatureValid { return r }
+        return nil
+    }
+
+    private var selectedStored: StoredReading? {
+        if let k = selectedKey, let e = store.readings.first(where: { $0.identityKey == k }) { return e }
+        return store.readings.last
+    }
+
+    private var isStored: Bool { liveUnverified == nil && selectedStored != nil }
+
+    private var displayReading: SpinTouchReading? {
+        if let live = liveUnverified { return live }
+        return selectedStored?.reconstructedReading()
+    }
+
+    private func displayLSI(_ reading: SpinTouchReading) -> LSIResult? {
+        if isStored, let lsi = selectedStored?.lsi { return LSIResult(value: lsi) }
+        if liveUnverified != nil { return currentLSI(reading) }
+        return nil
+    }
+
+    // MARK: - Selection + navigation
+
+    private var currentIndex: Int? {
+        guard let key = selectedStored?.identityKey else { return nil }
+        return store.readings.firstIndex { $0.identityKey == key }
+    }
+
+    private var atLatest: Bool { (currentIndex ?? 0) >= store.readings.count - 1 }
+    private var canStepOlder: Bool { isStored && (currentIndex ?? 0) > 0 }
+    private var canStepNewer: Bool { isStored && !atLatest }
+
+    private func select(_ key: String?) {
+        selectedKey = key
+        UserDefaults.standard.set(key, forKey: Self.lastViewedKeyDefault)
+        syncEditFields()
+    }
+
+    private func restoreSelection() {
+        let saved = UserDefaults.standard.string(forKey: Self.lastViewedKeyDefault)
+        if let saved, store.readings.contains(where: { $0.identityKey == saved }) {
+            selectedKey = saved
+        } else {
+            selectedKey = store.readings.last?.identityKey
+        }
+        syncEditFields()
+    }
+
+    private func stepOlder() {
+        guard let i = currentIndex, i > 0 else { return }
+        select(store.readings[i - 1].identityKey)
+    }
+
+    private func stepNewer() {
+        guard let i = currentIndex, i < store.readings.count - 1 else { return }
+        select(store.readings[i + 1].identityKey)
+    }
+
+    private func jumpLatest() { select(store.readings.last?.identityKey) }
+
+    @ViewBuilder
+    private var historyNavBar: some View {
+        if store.readings.count > 1 || !atLatest {
+            HStack(spacing: 12) {
+                Button { stepOlder() } label: {
+                    Image(systemName: "chevron.left").font(.body.weight(.semibold))
+                }
+                .disabled(!canStepOlder)
+
+                Spacer()
+                VStack(spacing: 1) {
+                    if let s = selectedStored {
+                        Text(s.date.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption).foregroundStyle(.primary)
+                    }
+                    if let i = currentIndex {
+                        Text("\(i + 1) of \(store.readings.count)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+
+                Button { stepNewer() } label: {
+                    Image(systemName: "chevron.right").font(.body.weight(.semibold))
+                }
+                .disabled(!canStepNewer)
+
+                Button { jumpLatest() } label: {
+                    Image(systemName: "forward.end.fill")
+                }
+                .disabled(atLatest)
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: - Scan + conditions persistence
+
+    private func handleScan() {
+        guard let r = ble.reading else { return }
+        guard r.endSignatureValid else { return }   // unverified: shown via liveUnverified, not saved
+        let date = r.reportTime ?? Date()
+        let lsi = LSI.compute(
+            ph: r.value("ph"), calcium: r.value("calcium"), alkalinity: r.value("alkalinity"),
+            cya: r.value("cyanuric_acid"), tempF: settings.waterTempValue, salt: r.value("salt"))?.value
+        store.upsert(reading: r, tempF: settings.waterTempValue, date: date, lsi: lsi)
+        select(r.rawHex)
+    }
+
+    private func syncEditFields() {
+        if let s = selectedStored {
+            editTemp = s.tempF.map(Self.formatTemp) ?? settings.waterTempF
+            editDate = s.date
+        } else {
+            editTemp = settings.waterTempF
+            editDate = Date()
+        }
+    }
+
+    private func pushConditions() {
+        guard let s = selectedStored else { return }
+        let t = Self.parseTemp(editTemp)
+        if t == s.tempF && editDate == s.date { return }   // no real change (e.g. from syncEditFields)
+        settings.waterTempF = editTemp                       // seed for the next scan
+        store.updateConditions(identityKey: s.identityKey, tempF: t, date: editDate)
+    }
+
+    private static func formatTemp(_ t: Double) -> String {
+        t == t.rounded() ? String(Int(t)) : String(format: "%.1f", t)
+    }
+
+    private static func parseTemp(_ s: String) -> Double? {
+        let cleaned = s.replacingOccurrences(of: ",", with: ".")
+        return Double(cleaned) ?? Double(cleaned.filter { $0.isNumber || $0 == "." })
     }
 
     // MARK: - Status
@@ -89,7 +236,7 @@ struct ContentView: View {
                 if let name = ble.deviceName {
                     Text(name).font(.caption).foregroundStyle(.secondary)
                 }
-                if let reading = ble.reading {
+                if let reading = displayReading {
                     if let summary = reading.qualitySummary {
                         Text("Out of range: \(summary)")
                             .font(.caption).foregroundStyle(.orange)
@@ -160,7 +307,7 @@ struct ContentView: View {
     }
 
     private func requestAIRead() {
-        guard ble.reading != nil else { return }
+        guard selectedStored != nil else { return }
         if !settings.aiDisclosureAccepted {
             showAIDisclosure = true
             return
@@ -169,29 +316,10 @@ struct ContentView: View {
     }
 
     private func startAIRead() {
-        guard let reading = ble.reading else { return }
+        guard let s = selectedStored else { return }
         showAIRead = true
-        Task { await aiReader.run(reading: reading, settings: settings) }
-    }
-
-    // MARK: - Persistence
-
-    private func persistCurrent() {
-        // Only save verified frames to history; unverified ones are shown but flagged.
-        guard let r = ble.reading, r.endSignatureValid else { return }
-        store.upsert(reading: r, tempF: settings.waterTempValue,
-                     date: effectiveDate, lsi: currentLSI(r)?.value)
-    }
-
-    private var unverifiedBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text("Unverified reading — the payload signature didn't match. Values may be incomplete and won't be saved to history.")
-                .font(.caption)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        aiReader.start(reading: s.reconstructedReading(), settings: settings,
+                       collectionDate: s.date, tempF: s.tempF)
     }
 
     // MARK: - LSI
@@ -263,14 +391,14 @@ struct ContentView: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
-    // MARK: - Conditions (temperature + date)
+    // MARK: - Conditions (temperature + collection date)
 
     private var conditionsCard: some View {
         VStack(spacing: 10) {
             HStack {
                 Label("Water Temp", systemImage: "thermometer.medium")
                 Spacer()
-                TextField("—", text: $settings.waterTempF)
+                TextField("—", text: $editTemp)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 60)
@@ -278,7 +406,7 @@ struct ContentView: View {
                 Text("°F").foregroundStyle(.secondary)
             }
             Divider()
-            DatePicker("Date", selection: $effectiveDate)
+            DatePicker("Collection time", selection: $editDate)
                 .font(.subheadline)
         }
         .font(.subheadline)
@@ -291,8 +419,8 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             metaRow("Disk series", reading.diskSeries ?? "—")
             metaRow("Sanitizer", reading.sanitizer ?? "—")
-            if let report = reading.reportTime {
-                metaRow("Report time", report.formatted(date: .abbreviated, time: .shortened))
+            if isStored, let t = selectedStored?.tempF {
+                metaRow("Water temp", "\(Int(t.rounded())) °F")
             }
             let effective = reading.reportTime ?? reading.receivedAt
             let age = Date().timeIntervalSince(effective)
@@ -323,6 +451,17 @@ struct ContentView: View {
         }
     }
 
+    private var unverifiedBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text("Unverified reading — the payload signature didn't match. Values may be incomplete and won't be saved to history.")
+                .font(.caption)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+    }
+
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "drop.degreesign")
@@ -344,7 +483,8 @@ struct ContentView: View {
             Button {
                 ble.startScan()
             } label: {
-                Label(ble.reading == nil ? "Scan" : "Scan Again", systemImage: "antenna.radiowaves.left.and.right")
+                Label(store.readings.isEmpty && ble.reading == nil ? "Scan" : "Scan New",
+                      systemImage: "antenna.radiowaves.left.and.right")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
