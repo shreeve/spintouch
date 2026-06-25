@@ -24,15 +24,12 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Layout.cardGap) {
+                    titleHeader
                     if shouldShowStatusCard {
                         statusCard
                             .padding(.horizontal, Layout.pagePadding)
                     }
                     if let reading = displayReading {
-                        if isStored {
-                            historyNavBar
-                                .padding(.horizontal, Layout.pagePadding)
-                        }
                         if !reading.endSignatureValid {
                             unverifiedBanner
                                 .padding(.horizontal, Layout.pagePadding)
@@ -65,7 +62,7 @@ struct ContentView: View {
             .onChange(of: settings.poolVolumeGallons) { _, _ in refreshAIIfExpanded() }
             .onChange(of: settings.poolNotes) { _, _ in refreshAIIfExpanded() }
             .onChange(of: settings.model) { _, _ in refreshAIIfExpanded() }
-            .navigationTitle("SpinTouch")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
@@ -188,58 +185,44 @@ struct ContentView: View {
 
     private func jumpLatest() { select(store.readings.last?.identityKey) }
 
-    @ViewBuilder
-    private var historyNavBar: some View {
-        if store.readings.count > 1 || !atLatest {
-            HStack(spacing: 12) {
-                Button { jumpOldest() } label: {
-                    Image(systemName: "backward.end.fill")
-                }
-                .disabled(!canStepOlder)
-
-                Button { stepOlder() } label: {
-                    Image(systemName: "chevron.left").font(.body.weight(.semibold))
-                }
-                .disabled(!canStepOlder)
-
-                Spacer()
-                VStack(spacing: 1) {
-                    if let s = selectedStored {
-                        Text(s.date.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption).foregroundStyle(.primary)
-                    }
-                    if let i = currentIndex {
-                        Text("\(i + 1) of \(store.readings.count)")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-
-                Button { stepNewer() } label: {
-                    Image(systemName: "chevron.right").font(.body.weight(.semibold))
-                }
-                .disabled(!canStepNewer)
-
-                Button { jumpLatest() } label: {
-                    Image(systemName: "forward.end.fill")
-                }
-                .disabled(atLatest)
-
-                Menu {
-                    Button(role: .destructive) {
-                        showDeleteConfirm = true
-                    } label: {
-                        Label("Delete Reading", systemImage: "trash")
-                    }
-                    .disabled(selectedStored == nil)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
+    /// Large title row. Lives in the scroll content (not the nav bar) so the
+    /// history controls beside it scroll away with the title.
+    private var titleHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("SpinTouch")
+                .font(.largeTitle).fontWeight(.bold)
+            Spacer(minLength: 8)
+            if isStored && (store.readings.count > 1 || !atLatest) {
+                historyControls
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
         }
+        .padding(.horizontal, Layout.pagePadding)
+        .padding(.top, 2)
+    }
+
+    private var historyControls: some View {
+        HStack(spacing: 16) {
+            Button { jumpOldest() } label: { Image(systemName: "backward.end.fill") }
+                .disabled(!canStepOlder)
+            Button { stepOlder() } label: { Image(systemName: "chevron.left") }
+                .disabled(!canStepOlder)
+            Button { stepNewer() } label: { Image(systemName: "chevron.right") }
+                .disabled(!canStepNewer)
+            Button { jumpLatest() } label: { Image(systemName: "forward.end.fill") }
+                .disabled(atLatest)
+            Menu {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Label("Delete Reading", systemImage: "trash")
+                }
+                .disabled(selectedStored == nil)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+        }
+        .font(.title3)
+        .imageScale(.medium)
     }
 
     private func deleteSelectedReading() {
@@ -599,9 +582,8 @@ struct ContentView: View {
 
     private var sampleTimeText: String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(editDate) {
-            return editDate.formatted(date: .omitted, time: .shortened)
-        }
+        // Always show a date for consistency across readings; drop the year only
+        // when it's the current year to keep the summary compact.
         if calendar.component(.year, from: editDate) == calendar.component(.year, from: Date()) {
             return editDate.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         }
