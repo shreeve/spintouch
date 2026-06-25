@@ -3,7 +3,7 @@ import Foundation
 /// One persisted reading (a flat, export-friendly snapshot).
 struct StoredReading: Codable, Identifiable {
     var id: UUID = UUID()
-    var identityKey: String        // dedupe key (device report time, else received)
+    var identityKey: String        // dedupe key: hex of the raw 91-byte BLE frame
     var date: Date                 // effective/report date (user-editable)
     var receivedAt: Date
     var diskSeries: String?
@@ -135,13 +135,22 @@ final class ReadingStore: ObservableObject {
         let snapshot = readings
         let url = fileURL
         persistQueue.async {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            if let data = try? encoder.encode(snapshot) {
-                try? data.write(to: url, options: .atomic)
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(snapshot)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                NSLog("ReadingStore save failed: \(error)")
             }
         }
+    }
+
+    /// Block until pending writes have flushed to disk. Call on app backgrounding
+    /// so the most recent scan/edit survives an immediate termination.
+    func flush() {
+        persistQueue.sync {}
     }
 
     // MARK: - Export
