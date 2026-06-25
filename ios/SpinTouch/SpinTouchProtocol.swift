@@ -3,9 +3,11 @@ import CoreBluetooth
 
 // MARK: - BLE UUIDs
 //
-// Reverse-engineered from the LaMotte WaterLink Solutions Home app.
-// Source of truth: misc/lamotte-spintouch/RESEARCH.md + the Home Assistant
-// integration's const.py / coordinator.py.
+// The GATT UUIDs, 91-byte payload format, and the parameter/disk/sanitizer
+// lookup tables here were adapted (under the MIT License) from the
+// lamotte-spintouch Home Assistant/ESPHome integration:
+//   https://github.com/joyfulhouse/lamotte-spintouch
+// See NOTICE for attribution. Not affiliated with or endorsed by LaMotte.
 
 enum SpinTouchUUID {
     static let service = CBUUID(string: "00000000-0000-1000-8000-BBBD00000000") // SPIN_TOUCH_SERVICE

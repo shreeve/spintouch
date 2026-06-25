@@ -5,8 +5,8 @@ WaterLink **SpinTouch** over Bluetooth LE, reads the latest water-chemistry
 test, and displays the parsed values. No MCU, no Home Assistant, no proxy —
 just your iPhone and the device.
 
-AI interpretation ("Get AI Read") is stubbed for a later step; this version
-gets the values flowing.
+This file documents the protocol and BLE flow. For features, attribution, and
+the trademark disclaimer, see the [root README](../README.md).
 
 ## Why a native app?
 
@@ -81,14 +81,13 @@ scan(service 00000000-0000-1000-8000-BBBD00000000)
 
 Parsing scans entries by `TestType` (param id) rather than fixed offsets, since
 different SpinDisk series report different parameters. The parser, parameter
-map, and ranges mirror the reverse-engineered protocol in
-`../misc/lamotte-spintouch/RESEARCH.md` and the proven Home Assistant
-integration. It was validated against the real captured payloads in that doc.
+map, and ranges were adapted (under the MIT License) from the
+[joyfulhouse/lamotte-spintouch](https://github.com/joyfulhouse/lamotte-spintouch)
+integration; see [`../NOTICE`](../NOTICE) for attribution.
 
 ## Roadmap
 
-- [ ] Wire up "Get AI Read": POST values + ideal ranges to an LLM and show a
-      plain-English assessment with dosing suggestions.
+- [x] "AI Read": send values + ideal ranges to Claude for a plain-English
+      assessment with dosing suggestions.
+- [x] History / charts of past readings, with CSV/JSON export.
 - [ ] Remember the last device and auto-reconnect.
-- [ ] History / charts of past readings.
-- [ ] Polite auto-disconnect window so the official app can still connect.
