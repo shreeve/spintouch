@@ -106,7 +106,10 @@ enum SpinTouchParser {
     /// malformed (bad length or start signature).
     static func parse(_ data: Data) -> SpinTouchReading? {
         guard data.count >= Layout.minDataSize else { return nil }
-        let bytes = [UInt8](data)
+        // Use only the fixed-size frame: a transport that appends trailing bytes
+        // must not change parsing or the identity hash (which keys history dedupe).
+        let frame = data.prefix(Layout.minDataSize)
+        let bytes = [UInt8](frame)
 
         guard Array(bytes[0..<Layout.headerSize]) == Layout.startSignature else { return nil }
 
@@ -166,7 +169,7 @@ enum SpinTouchParser {
             numValidResults: numValid,
             reportTime: reportTime,
             receivedAt: Date(),
-            rawHex: data.map { String(format: "%02X", $0) }.joined(),
+            rawHex: frame.map { String(format: "%02X", $0) }.joined(),
             endSignatureValid: endSignatureValid
         )
     }
