@@ -6,16 +6,24 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVolumeCalc = false
     @State private var cacheCleared = false
+    @State private var apiKeyDraft = ""
     @FocusState private var volumeFocused: Bool
+
+    /// Persist the edited key once (Keychain writes are relatively slow), rather
+    /// than on every keystroke.
+    private func commitAPIKey() {
+        if apiKeyDraft != settings.apiKey { settings.apiKey = apiKeyDraft }
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("sk-ant-…", text: $settings.apiKey)
+                    SecureField("sk-ant-…", text: $apiKeyDraft)
                         .textContentType(.password)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        .onSubmit { commitAPIKey() }
                 } header: {
                     Text("Anthropic API Key")
                 } footer: {
@@ -76,9 +84,11 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { apiKeyDraft = settings.apiKey }
+            .onDisappear { commitAPIKey() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("Done") { commitAPIKey(); dismiss() }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
