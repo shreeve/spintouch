@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UIKit
 
 /// Honest per-metric formatting, with a leading + for LSI.
 private func metricFormat(_ v: Double, _ key: String) -> String {
@@ -11,9 +12,19 @@ struct TrendsView: View {
     @ObservedObject var store: ReadingStore
     @Environment(\.dismiss) private var dismiss
     @State private var showClearConfirm = false
+    @State private var exportFile: ExportFile?
 
     private var availableMetrics: [Metric] {
         MetricCatalog.all.filter { !store.series(for: $0.key).isEmpty }
+    }
+
+    // Build the export file in the action (on tap), not while the menu renders.
+    private func exportCSV() {
+        if let url = try? store.exportCSVURL() { exportFile = ExportFile(url: url) }
+    }
+
+    private func exportJSON() {
+        if let url = try? store.exportJSONURL() { exportFile = ExportFile(url: url) }
     }
 
     var body: some View {
@@ -48,12 +59,8 @@ struct TrendsView: View {
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        if let csv = try? store.exportCSVURL() {
-                            ShareLink(item: csv) { Label("Export CSV", systemImage: "tablecells") }
-                        }
-                        if let json = try? store.exportJSONURL() {
-                            ShareLink(item: json) { Label("Export JSON", systemImage: "curlybraces") }
-                        }
+                        Button { exportCSV() } label: { Label("Export CSV", systemImage: "tablecells") }
+                        Button { exportJSON() } label: { Label("Export JSON", systemImage: "curlybraces") }
                         Divider()
                         Button(role: .destructive) { showClearConfirm = true } label: {
                             Label("Clear History", systemImage: "trash")
@@ -64,12 +71,27 @@ struct TrendsView: View {
                     .disabled(store.readings.isEmpty)
                 }
             }
+            .sheet(item: $exportFile) { ActivityView(url: $0.url) }
             .confirmationDialog("Delete all saved readings?", isPresented: $showClearConfirm, titleVisibility: .visible) {
                 Button("Delete All", role: .destructive) { store.clear() }
                 Button("Cancel", role: .cancel) {}
             }
         }
     }
+}
+
+private struct ExportFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// Hosts a UIActivityViewController so exports share through the system sheet.
+private struct ActivityView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private struct MetricRow: View {
