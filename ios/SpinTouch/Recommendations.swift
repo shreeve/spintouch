@@ -49,6 +49,20 @@ enum Recommendations {
             }
         }
 
+        if isBromine, let br = v("bromine"), br > 0 {
+            if br < 2.0 {
+                out.append(Advice(title: "Low Bromine",
+                    detail: "Bromine is \(fmt(br)) ppm (ideal 2–4). Add bromine sanitizer (tablets or granules); re-test in a few hours.",
+                    severity: .critical,
+                    affectedKeys: ["bromine"]))
+            } else if br > 6.0 {
+                out.append(Advice(title: "High Bromine",
+                    detail: "Bromine is \(fmt(br)) ppm. Avoid swimming above 6 ppm; let it dissipate before re-testing.",
+                    severity: .action,
+                    affectedKeys: ["bromine"]))
+            }
+        }
+
         if let cc = v("combined_chlorine"), cc > 0.2 {
             out.append(Advice(title: "Chloramines Present",
                 detail: "Combined chlorine is \(fmt(cc)) ppm (ideal ≤ 0.2). Shock the pool (breakpoint chlorination).",
