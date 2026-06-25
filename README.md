@@ -14,6 +14,18 @@ No proxy, no MCU, no Home Assistant required — just your iPhone and the device
 > output) is informational only — always follow product label instructions and
 > consult a professional for serious imbalances.
 
+## Demo
+
+▶️ A quick look at SpinTouch reading a live test on-device:
+
+<!--
+  To embed the video: edit this README in the github.com web editor and DRAG
+  the demo .mp4 into the page right below this comment. GitHub uploads it and
+  inserts a https://github.com/user-attachments/assets/... URL that renders as
+  an inline, click-to-play player. (That URL can only be created via the web
+  drag-and-drop, not the API/CLI.)
+-->
+
 ## Features
 
 - **Direct BLE connection** to the SpinTouch (scan → connect → read → ACK), with
