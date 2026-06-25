@@ -1,8 +1,8 @@
 import Foundation
 
 enum BuildInfo {
-    static let builtAt = "2026-06-25 04:25:09 UTC"
-    static let gitCommit = "56e2bdf"
+    static let builtAt = "2026-06-25 05:28:35 UTC"
+    static let gitCommit = "4d2b810"
     static var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
