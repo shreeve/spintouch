@@ -40,21 +40,19 @@ struct StoredReading: Codable, Identifiable {
     /// history with the same UI). Read-only; specs are synthesized from the
     /// metric catalog.
     func reconstructedReading() -> SpinTouchReading {
-        let derivedKeys: Set<String> = ["combined_chlorine", "fc_cya_ratio"]
-        var params: [ParameterValue] = []
-        var derived: [ParameterValue] = []
+        var valuesInCatalogOrder: [ParameterValue] = []
         for (i, metric) in MetricCatalog.chemistry.enumerated() {
             guard let v = values[metric.key] else { continue }
             let spec = ParamSpec(paramID: 0, key: metric.key, name: metric.name, unit: metric.unit,
                                  decimals: metric.decimals, minValid: -1e9, maxValid: 1e9,
                                  idealLow: metric.idealLow, idealHigh: metric.idealHigh, sortOrder: i)
             let pv = ParameterValue(spec: spec, value: v, decimals: metric.decimals)
-            if derivedKeys.contains(metric.key) { derived.append(pv) } else { params.append(pv) }
+            valuesInCatalogOrder.append(pv)
         }
         return SpinTouchReading(
-            parameters: params, derived: derived,
+            parameters: valuesInCatalogOrder, derived: [],
             diskSeries: diskSeries, sanitizer: sanitizer,
-            numValidResults: params.count, reportTime: date, receivedAt: receivedAt,
+            numValidResults: valuesInCatalogOrder.count, reportTime: date, receivedAt: receivedAt,
             rawHex: identityKey, endSignatureValid: true)
     }
 }

@@ -52,6 +52,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1A0000000000000000000033 /* Build configuration list for PBXNativeTarget "SpinTouch" */;
 			buildPhases = (
+				1A0000000000000000000040 /* Generate BuildInfo */,
 				1A0000000000000000000012 /* Sources */,
 				1A0000000000000000000013 /* Frameworks */,
 				1A0000000000000000000014 /* Resources */,
@@ -111,6 +112,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1A0000000000000000000040 /* Generate BuildInfo */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate BuildInfo";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/gen-buildinfo.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1A0000000000000000000012 /* Sources */ = {
@@ -191,6 +214,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SD6N7Z8P9P;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "SpinTouch connects to your LaMotte SpinTouch over Bluetooth to read pool/spa water chemistry results.";
@@ -221,6 +245,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SD6N7Z8P9P;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "SpinTouch connects to your LaMotte SpinTouch over Bluetooth to read pool/spa water chemistry results.";

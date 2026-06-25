@@ -39,10 +39,20 @@ struct ParameterValue: Identifiable {
     }
 
     var idealText: String? {
-        switch (spec.idealLow, spec.idealHigh) {
-        case let (l?, h?): return "ideal \(trim(l))–\(trim(h))"
-        case let (l?, nil): return "ideal ≥ \(trim(l))"
-        case let (nil, h?): return "ideal ≤ \(trim(h))"
+        let ideal: String? = {
+            switch (spec.idealLow, spec.idealHigh) {
+            case let (l?, h?) where abs(l) < 0.0001: return "ideal ≤ \(trim(h))"
+            case let (l?, h?): return "ideal \(trim(l))–\(trim(h))"
+            case let (l?, nil): return "ideal ≥ \(trim(l))"
+            case let (nil, h?): return "ideal ≤ \(trim(h))"
+            default: return nil
+            }
+        }()
+        let help = MetricCatalog.info(spec.key)?.help
+        switch (ideal, help) {
+        case let (i?, h?): return "\(i) · \(h)"
+        case let (i?, nil): return i
+        case let (nil, h?): return h
         default: return nil
         }
     }

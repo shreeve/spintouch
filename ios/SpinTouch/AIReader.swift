@@ -8,6 +8,15 @@ enum AIReadState {
     case failed(String)
 }
 
+extension AIReadState {
+    var text: String? {
+        switch self {
+        case .streaming(let text), .done(let text): return text
+        default: return nil
+        }
+    }
+}
+
 @MainActor
 final class AIReader: ObservableObject {
     @Published var state: AIReadState = .idle
@@ -178,10 +187,13 @@ enum AnthropicService {
     2. Out of range — list each parameter that is off, with why it matters. If an \
     LSI value is provided, comment on water balance (corrosive vs scaling).
     3. What to do — concrete, ordered dosing steps (<ol>). Use the pool volume to \
-    give approximate amounts of common consumer chemicals (liquid chlorine / \
-    bleach, muriatic acid, sodium bicarbonate, soda ash, cyanuric acid, calcium \
-    chloride, phosphate remover). If volume is unknown, dose per 10,000 gallons \
-    and say so. A small table of "Chemical / Amount / Why" is welcome here.
+    give homeowner-friendly product amounts, not lab units. Prefer gallons, \
+    quarts, cups, fluid ounces, pounds, or ounces of common pool products. \
+    Examples: "add 1/2 gallon of 10% liquid chlorine" or "add 1 quart of 31.45% \
+    muriatic acid". Do NOT answer in mg/L, mg/mL, moles, or abstract \
+    concentration changes unless also converted to a real product amount. If \
+    volume is unknown, dose per 10,000 gallons and say so. A small table of \
+    "Chemical / Amount / Why" is welcome here.
     4. Re-test — what to re-test and when.
 
     Safety rules: never advise mixing chemicals together; always add chemical to \
@@ -229,10 +241,24 @@ enum AnthropicService {
         for v in reading.allValues {
             let unit = v.displayUnit.isEmpty ? "" : " \(v.displayUnit)"
             let ideal = v.idealText.map { " (\($0))" } ?? ""
-            lines.append("- \(v.spec.name): \(v.formattedValue)\(unit)\(ideal) [\(v.status.label)]")
+            let kind = MetricCatalog.info(v.spec.key)?.kind.rawValue ?? "Measured"
+            lines.append("- \(v.spec.name): \(v.formattedValue)\(unit)\(ideal) [\(v.status.label), \(kind)]")
+        }
+
+        let lsi = LSI.compute(
+            ph: reading.value("ph"), calcium: reading.value("calcium"),
+            alkalinity: reading.value("alkalinity"), cya: reading.value("cyanuric_acid"),
+            tempF: tempF, salt: reading.value("salt"))
+        let advice = Recommendations.evaluate(reading, poolType: settings.poolType, tempF: tempF, lsi: lsi)
+        if !advice.isEmpty {
+            lines.append("")
+            lines.append("Offline deterministic recommendations (use as context; explain/refine, don't contradict without reason):")
+            for a in advice {
+                lines.append("- \(a.title) [\(a.severity)]: \(a.detail)")
+            }
         }
         lines.append("")
-        lines.append("Give the assessment and dosing steps.")
+        lines.append("Explain this test and suggest next steps.")
         return lines.joined(separator: "\n")
     }
 }

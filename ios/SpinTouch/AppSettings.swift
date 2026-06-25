@@ -19,6 +19,13 @@ final class AppSettings: ObservableObject {
     static let keyKeychain = "anthropic_api_key"
     static let defaultModel = "claude-haiku-4-5"
     static let poolTypeOptions = ["Chlorine", "Saltwater", "Bromine", "Biguanide", "Other"]
+    static let modelOptions = [
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+    ]
 
     init() {
         let d = UserDefaults.standard

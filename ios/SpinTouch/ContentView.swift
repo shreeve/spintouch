@@ -7,9 +7,12 @@ struct ContentView: View {
     @StateObject private var store = ReadingStore()
     @State private var showLog = false
     @State private var showSettings = false
-    @State private var showAIRead = false
     @State private var showAIDisclosure = false
     @State private var showTrends = false
+    @State private var showConditionsEditor = false
+    @State private var showDeleteConfirm = false
+    @State private var aiExpanded = false
+    @State private var aiContentHeight: CGFloat = 1
     @State private var selectedKey: String?       // identityKey of the displayed stored reading
     @State private var editTemp = ""
     @State private var editDate = Date()
@@ -20,28 +23,48 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
-                    statusCard
+                VStack(spacing: Layout.cardGap) {
+                    if shouldShowStatusCard {
+                        statusCard
+                            .padding(.horizontal, Layout.pagePadding)
+                    }
                     if let reading = displayReading {
-                        if isStored { historyNavBar }
-                        if !reading.endSignatureValid { unverifiedBanner }
-                        if let lsi = displayLSI(reading) { lsiCard(lsi) }
+                        if isStored {
+                            historyNavBar
+                                .padding(.horizontal, Layout.pagePadding)
+                        }
+                        if !reading.endSignatureValid {
+                            unverifiedBanner
+                                .padding(.horizontal, Layout.pagePadding)
+                        }
+                        if let lsi = displayLSI(reading) {
+                            lsiCard(lsi)
+                                .padding(.horizontal, Layout.pagePadding)
+                        }
                         resultsSection(reading)
-                        if isStored { conditionsCard }
+                            .padding(.horizontal, Layout.pagePadding)
                         recommendationsCard(reading)
-                        if isStored { aiReadPlaceholder }
+                            .padding(.horizontal, Layout.pagePadding)
                         metadataCard(reading)
+                            .padding(.horizontal, Layout.pagePadding)
                     } else {
                         emptyState
+                            .padding(.horizontal, Layout.pagePadding)
                     }
                 }
-                .padding()
+                .padding(.vertical, Layout.pageVerticalPadding)
             }
             .scrollDismissesKeyboard(.interactively)
             .onAppear { restoreSelection() }
             .onChange(of: ble.reading?.receivedAt) { _, _ in handleScan() }
             .onChange(of: editTemp) { _, _ in pushConditions() }
             .onChange(of: editDate) { _, _ in pushConditions() }
+            .onChange(of: aiExpanded) { _, expanded in if expanded { onAIExpand() } }
+            .onChange(of: selectedKey) { _, _ in refreshAIIfExpanded() }
+            .onChange(of: settings.poolType) { _, _ in refreshAIIfExpanded() }
+            .onChange(of: settings.poolVolumeGallons) { _, _ in refreshAIIfExpanded() }
+            .onChange(of: settings.poolNotes) { _, _ in refreshAIIfExpanded() }
+            .onChange(of: settings.model) { _, _ in refreshAIIfExpanded() }
             .navigationTitle("SpinTouch")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -63,17 +86,22 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView(settings: settings, onClearAICache: { aiReader.clearCache() })
             }
-            .sheet(isPresented: $showAIRead) {
-                if let s = selectedStored {
-                    AIReadView(reading: s.reconstructedReading(), collectionDate: s.date,
-                               tempF: s.tempF, settings: settings, reader: aiReader)
-                }
+            .sheet(isPresented: $showConditionsEditor) {
+                ConditionsEditorView(temp: $editTemp, date: $editDate)
             }
             .alert("AI Read", isPresented: $showAIDisclosure) {
-                Button("Continue") { settings.aiDisclosureAccepted = true; startAIRead() }
-                Button("Cancel", role: .cancel) {}
+                Button("Continue") { settings.aiDisclosureAccepted = true; startInlineAIRead() }
+                Button("Cancel", role: .cancel) { aiExpanded = false }
             } message: {
                 Text("AI Read sends this reading and your pool settings/notes to Anthropic using your API key. Offline recommendations stay on-device.")
+            }
+            .confirmationDialog("Delete this reading?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("Delete Reading", role: .destructive) { deleteSelectedReading() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if let s = selectedStored {
+                    Text("Delete reading sampled at \(s.date.formatted(date: .abbreviated, time: .shortened))? This cannot be undone.")
+                }
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
@@ -94,6 +122,12 @@ struct ContentView: View {
 
     private var isStored: Bool { liveUnverified == nil && selectedStored != nil }
 
+    private var shouldShowStatusCard: Bool {
+        if ble.phase.isBusy { return true }
+        if case .failed = ble.phase { return true }
+        return liveUnverified != nil || selectedStored == nil
+    }
+
     private var displayReading: SpinTouchReading? {
         if let live = liveUnverified { return live }
         return selectedStored?.reconstructedReading()
@@ -103,6 +137,14 @@ struct ContentView: View {
         if isStored, let lsi = selectedStored?.lsi { return LSIResult(value: lsi) }
         if liveUnverified != nil { return currentLSI(reading) }
         return nil
+    }
+
+    private func displayAdvice(_ reading: SpinTouchReading) -> [Advice] {
+        Recommendations.evaluate(
+            reading,
+            poolType: settings.poolType,
+            tempF: selectedStored?.tempF ?? settings.waterTempValue,
+            lsi: displayLSI(reading))
     }
 
     // MARK: - Selection + navigation
@@ -137,6 +179,8 @@ struct ContentView: View {
         select(store.readings[i - 1].identityKey)
     }
 
+    private func jumpOldest() { select(store.readings.first?.identityKey) }
+
     private func stepNewer() {
         guard let i = currentIndex, i < store.readings.count - 1 else { return }
         select(store.readings[i + 1].identityKey)
@@ -148,6 +192,11 @@ struct ContentView: View {
     private var historyNavBar: some View {
         if store.readings.count > 1 || !atLatest {
             HStack(spacing: 12) {
+                Button { jumpOldest() } label: {
+                    Image(systemName: "backward.end.fill")
+                }
+                .disabled(!canStepOlder)
+
                 Button { stepOlder() } label: {
                     Image(systemName: "chevron.left").font(.body.weight(.semibold))
                 }
@@ -175,8 +224,34 @@ struct ContentView: View {
                     Image(systemName: "forward.end.fill")
                 }
                 .disabled(atLatest)
+
+                Menu {
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label("Delete Reading", systemImage: "trash")
+                    }
+                    .disabled(selectedStored == nil)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    private func deleteSelectedReading() {
+        guard let s = selectedStored,
+              let i = store.readings.firstIndex(where: { $0.id == s.id }) else { return }
+        store.delete(s)
+        if store.readings.isEmpty {
+            select(nil)
+        } else if i < store.readings.count {
+            select(store.readings[i].identityKey)
+        } else {
+            select(store.readings.last?.identityKey)
         }
     }
 
@@ -209,6 +284,7 @@ struct ContentView: View {
         if t == s.tempF && editDate == s.date { return }   // no real change (e.g. from syncEditFields)
         settings.waterTempF = editTemp                       // seed for the next scan
         store.updateConditions(identityKey: s.identityKey, tempF: t, date: editDate)
+        refreshAIIfExpanded()                                // inputs changed → re-read (cache-aware)
     }
 
     private static func formatTemp(_ t: Double) -> String {
@@ -232,18 +308,20 @@ struct ContentView: View {
                     .foregroundStyle(phaseColor)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(ble.phase.label).font(.subheadline).bold()
+                if let reading = displayReading, !ble.phase.isBusy {
+                    let summary = WaterQuality.evaluate(
+                        reading: reading,
+                        advice: displayAdvice(reading),
+                        lsi: displayLSI(reading))
+                    Text(summary.title).font(.subheadline).bold()
+                    Text(summary.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(summaryColor(summary))
+                } else {
+                    Text(ble.phase.label).font(.subheadline).bold()
+                }
                 if let name = ble.deviceName {
                     Text(name).font(.caption).foregroundStyle(.secondary)
-                }
-                if let reading = displayReading {
-                    if let summary = reading.qualitySummary {
-                        Text("Out of range: \(summary)")
-                            .font(.caption).foregroundStyle(.orange)
-                    } else {
-                        Text("All measured parameters in range")
-                            .font(.caption).foregroundStyle(.green)
-                    }
                 }
             }
             Spacer()
@@ -251,6 +329,16 @@ struct ContentView: View {
         .padding()
         .frame(maxWidth: .infinity)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func summaryColor(_ summary: WaterQualitySummary) -> Color {
+        if summary.title == "Water is balanced" { return .green }
+        switch summary.severity {
+        case .watch: return .blue
+        case .minor: return .orange
+        case .action: return .orange
+        case .critical: return .red
+        }
     }
 
     private var phaseIcon: String {
@@ -273,51 +361,75 @@ struct ContentView: View {
     // MARK: - Results
 
     private func resultsSection(_ reading: SpinTouchReading) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Results").font(.headline)
-            ForEach(reading.allValues) { value in
-                ReadingRow(value: value)
+        VStack(alignment: .leading, spacing: Layout.sectionGap) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Results").font(.headline)
+                Spacer()
+                if isStored {
+                    Button {
+                        showConditionsEditor = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            if let volume = compactPoolVolume {
+                                Text(volume)
+                            }
+                            if let temp = selectedStored?.tempF {
+                                Label("\(Int(temp.rounded()))°", systemImage: "thermometer.medium")
+                            }
+                            Label(sampleTimeText, systemImage: "clock")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            ForEach(Metric.Group.allCases, id: \.self) { group in
+                let values = groupedValues(reading, group)
+                if !values.isEmpty {
+                    VStack(alignment: .leading, spacing: Layout.rowGap) {
+                        Text(group.rawValue)
+                            .font(.caption).bold()
+                            .foregroundStyle(.secondary)
+                        ForEach(values) { value in
+                            ReadingRow(value: value)
+                        }
+                    }
+                    if group != Metric.Group.allCases.last { Divider() }
+                }
             }
         }
-        .padding()
+        .padding(Layout.cardPadding)
         .frame(maxWidth: .infinity)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
-    private var aiReadPlaceholder: some View {
-        Button {
-            requestAIRead()
-        } label: {
-            HStack {
-                Image(systemName: "sparkles")
-                Text("Get AI Read").bold()
-                Spacer()
-                if aiReader.isLoading {
-                    ProgressView()
-                } else {
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-        }
-        .buttonStyle(.plain)
-        .disabled(aiReader.isLoading)
+    private func groupedValues(_ reading: SpinTouchReading, _ group: Metric.Group) -> [ParameterValue] {
+        reading.allValues.filter { MetricCatalog.info($0.spec.key)?.group == group }
     }
 
-    private func requestAIRead() {
-        guard selectedStored != nil else { return }
-        if !settings.aiDisclosureAccepted {
-            showAIDisclosure = true
+    /// Called when the AI section is expanded. Gates on the API key and the
+    /// one-time data-sharing disclosure, then kicks off a (cache-aware) read.
+    private func onAIExpand() {
+        guard settings.hasAPIKey else {
+            aiExpanded = false        // nothing to show yet — send them to add a key
+            showSettings = true
             return
         }
-        startAIRead()
+        guard settings.aiDisclosureAccepted else { showAIDisclosure = true; return }
+        startInlineAIRead()
     }
 
-    private func startAIRead() {
-        guard let s = selectedStored else { return }
-        showAIRead = true
+    /// Re-read when an input changed while the section is open. The reader serves
+    /// an instant cache hit when the prompt is unchanged, so this only spends
+    /// tokens when temperature, pool size/type/notes, model, or the reading move.
+    private func refreshAIIfExpanded() {
+        guard aiExpanded else { return }
+        startInlineAIRead()
+    }
+
+    private func startInlineAIRead() {
+        guard let s = selectedStored, settings.hasAPIKey, settings.aiDisclosureAccepted else { return }
         aiReader.start(reading: s.reconstructedReading(), settings: settings,
                        collectionDate: s.date, tempF: s.tempF)
     }
@@ -366,37 +478,143 @@ struct ContentView: View {
 
     @ViewBuilder
     private func recommendationsCard(_ reading: SpinTouchReading) -> some View {
-        let advice = Recommendations.evaluate(reading)
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Recommendations", systemImage: "checklist")
-                .font(.headline)
-            if advice.isEmpty {
-                Label("All measured parameters look in range.", systemImage: "checkmark.seal.fill")
-                    .font(.subheadline).foregroundStyle(.green)
-            } else {
-                ForEach(advice) { a in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: a.severity == .critical ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(a.severity == .critical ? .red : .orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(a.title).font(.subheadline).bold()
-                            Text(a.detail).font(.caption).foregroundStyle(.secondary)
-                        }
+        let advice = displayAdvice(reading)
+        VStack(alignment: .leading, spacing: Layout.sectionGap) {
+            HStack {
+                Label("Recommendations", systemImage: "checklist")
+                    .font(.headline)
+                Spacer()
+            }
+
+            standardRecommendations(advice)
+
+            Divider().padding(.vertical, 2)
+
+            DisclosureGroup(isExpanded: $aiExpanded) {
+                aiRecommendations
+                    .padding(.top, 4)
+            } label: {
+                Label("AI recommendations", systemImage: "sparkles")
+                    .font(.subheadline).bold()
+            }
+        }
+        .padding(Layout.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private func standardRecommendations(_ advice: [Advice]) -> some View {
+        if advice.isEmpty {
+            Label("All measured parameters look in range.", systemImage: "checkmark.seal.fill")
+                .font(.subheadline).foregroundStyle(.green)
+        } else {
+            ForEach(advice) { a in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: adviceIcon(a.severity))
+                        .foregroundStyle(adviceColor(a.severity))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(a.title).font(.subheadline).bold()
+                        Text(a.detail).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private var aiRecommendations: some View {
+        if !settings.hasAPIKey {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Add an Anthropic API key in Settings to enable AI recommendations.", systemImage: "key")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Open Settings") { showSettings = true }
+                    .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            switch aiReader.state {
+            case .idle, .loading:
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Asking Claude…").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .streaming(let partial):
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Writing recommendations…").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Text(Markup.plainText(fromHTML: partial))
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            case .done(let text):
+                InlineHTMLView(html: Markup.html(from: text), height: $aiContentHeight)
+                    .frame(height: aiContentHeight)
+                    .frame(maxWidth: .infinity)
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button("Try Again") { startInlineAIRead() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func adviceIcon(_ severity: AdviceSeverity) -> String {
+        switch severity {
+        case .watch: return "eye"
+        case .minor: return "exclamationmark.circle"
+        case .action: return "checklist"
+        case .critical: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func adviceColor(_ severity: AdviceSeverity) -> Color {
+        switch severity {
+        case .watch: return .blue
+        case .minor: return .orange
+        case .action: return .orange
+        case .critical: return .red
+        }
+    }
+
+    private var compactPoolVolume: String? {
+        guard let gallons = settings.poolVolumeValue, gallons > 0 else { return nil }
+        if gallons >= 10_000 {
+            let k = Double(gallons) / 1000.0
+            return k == k.rounded() ? "\(Int(k))k gal" : String(format: "%.1fk gal", k)
+        }
+        return "\(gallons) gal"
+    }
+
+    private var sampleTimeText: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(editDate) {
+            return editDate.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.component(.year, from: editDate) == calendar.component(.year, from: Date()) {
+            return editDate.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        }
+        return editDate.formatted(date: .abbreviated, time: .shortened)
     }
 
     // MARK: - Conditions (temperature + collection date)
 
     private var conditionsCard: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Layout.sectionGap) {
             HStack {
                 Label("Water Temp", systemImage: "thermometer.medium")
+                    .frame(width: Layout.conditionsLabelWidth, alignment: .leading)
                 Spacer()
                 TextField("—", text: $editTemp)
                     .keyboardType(.decimalPad)
@@ -406,11 +624,17 @@ struct ContentView: View {
                 Text("°F").foregroundStyle(.secondary)
             }
             Divider()
-            DatePicker("Collection time", selection: $editDate)
+            HStack {
+                Label("Collected", systemImage: "calendar.badge.clock")
+                    .frame(width: Layout.conditionsLabelWidth, alignment: .leading)
+                Spacer()
+                DatePicker("", selection: $editDate)
+                    .labelsHidden()
+            }
                 .font(.subheadline)
         }
         .font(.subheadline)
-        .padding()
+        .padding(Layout.cardPadding)
         .frame(maxWidth: .infinity)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
@@ -419,9 +643,6 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             metaRow("Disk series", reading.diskSeries ?? "—")
             metaRow("Sanitizer", reading.sanitizer ?? "—")
-            if isStored, let t = selectedStored?.tempF {
-                metaRow("Water temp", "\(Int(t.rounded())) °F")
-            }
             let effective = reading.reportTime ?? reading.receivedAt
             let age = Date().timeIntervalSince(effective)
             HStack {
@@ -438,7 +659,7 @@ struct ContentView: View {
             }
         }
         .font(.caption)
-        .padding()
+        .padding(Layout.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
@@ -499,7 +720,9 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding()
+        .padding(.horizontal, Layout.bottomBarPadding)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
         .background(.bar)
     }
 
@@ -587,23 +810,41 @@ private struct ReadingRow: View {
     let value: ParameterValue
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(value.spec.name).font(.subheadline).bold()
-                if let ideal = value.idealText {
-                    Text(ideal).font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(value.spec.name).font(.subheadline).bold()
+                    if MetricCatalog.info(value.spec.key)?.kind == .calculated {
+                        Image(systemName: "function")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Calculated")
+                    }
                 }
+                Text(value.idealText ?? " ")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
+            .layoutPriority(1)
             Spacer()
-            Text(value.formattedValue)
-                .font(.title3).monospacedDigit().bold()
-                .frame(minWidth: 70, alignment: .trailing)
-            Text(value.displayUnit)
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(width: 32, alignment: .leading)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value.formattedValue)
+                    .font(.title3).monospacedDigit().bold()
+                    .frame(minWidth: Layout.valueColumnWidth, alignment: .trailing)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Text(value.displayUnit)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .frame(width: Layout.unitColumnWidth, alignment: .leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
             statusChip
+                .padding(.top, 1)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Layout.rowVerticalPadding)
     }
 
     private var statusChip: some View {
@@ -612,7 +853,9 @@ private struct ReadingRow: View {
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(chipColor.opacity(0.18), in: Capsule())
             .foregroundStyle(chipColor)
-            .frame(width: 52)
+            .frame(width: Layout.statusColumnWidth)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
     }
 
     private var chipColor: Color {
@@ -623,4 +866,63 @@ private struct ReadingRow: View {
         case .unknown: return .secondary
         }
     }
+}
+
+private struct ConditionsEditorView: View {
+    @Binding var temp: String
+    @Binding var date: Date
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var tempFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Sample Conditions") {
+                    HStack {
+                        Image(systemName: "thermometer.medium")
+                            .frame(width: 24, alignment: .center)
+                        Text("Water Temp")
+                        Spacer()
+                        TextField("—", text: $temp)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 70)
+                            .focused($tempFocused)
+                        Text("°F").foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Image(systemName: "calendar.badge.clock")
+                            .frame(width: 24, alignment: .center)
+                        DatePicker("Time", selection: $date)
+                    }
+                }
+            }
+            .navigationTitle("Edit Sample")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { tempFocused = false }
+                }
+            }
+        }
+    }
+}
+
+private enum Layout {
+    static let cardGap: CGFloat = 12
+    static let sectionGap: CGFloat = 8
+    static let rowGap: CGFloat = 6
+    static let cardPadding: CGFloat = 16
+    static let rowVerticalPadding: CGFloat = 2
+    static let conditionsLabelWidth: CGFloat = 150
+    static let pagePadding: CGFloat = 20
+    static let pageVerticalPadding: CGFloat = 12
+    static let bottomBarPadding: CGFloat = 28
+    static let valueColumnWidth: CGFloat = 54
+    static let unitColumnWidth: CGFloat = 24
+    static let statusColumnWidth: CGFloat = 52
 }

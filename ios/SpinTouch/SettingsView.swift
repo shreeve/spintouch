@@ -19,7 +19,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Anthropic API Key")
                 } footer: {
-                    Text("Stored securely in your device Keychain. Get a key at console.anthropic.com.")
+                    Text("This API key is used to generate AI recommendations and is stored securely in your device Keychain. Get a key at console.anthropic.com.")
                 }
 
                 Section("Pool") {
@@ -44,13 +44,15 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextField("claude-sonnet-4-5", text: $settings.model)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                    Picker("Model", selection: $settings.model) {
+                        ForEach(AppSettings.modelOptions, id: \.self) { model in
+                            Text(modelLabel(model)).tag(model)
+                        }
+                    }
                 } header: {
                     Text("Model")
                 } footer: {
-                    Text("If you get a model error, set this to a valid Anthropic model id.")
+                    Text("Haiku is fastest and cheapest. Sonnet is a stronger default if you want richer explanations. Opus is highest quality but slower and more expensive.")
                 }
 
                 Section {
@@ -64,6 +66,12 @@ struct SettingsView: View {
                     .disabled(cacheCleared)
                 } footer: {
                     Text("AI reads are cached per unique set of inputs (values, temperature, pool settings) so identical reads are instant and don't re-bill.")
+                }
+
+                Section("App") {
+                    labeledValue("Version", "\(BuildInfo.version) (\(BuildInfo.build))")
+                    labeledValue("Built", BuildInfo.builtAt)
+                    labeledValue("Commit", BuildInfo.gitCommit)
                 }
             }
             .navigationTitle("Settings")
@@ -80,6 +88,29 @@ struct SettingsView: View {
             .sheet(isPresented: $showVolumeCalc) {
                 VolumeCalculatorView(settings: settings)
             }
+        }
+    }
+
+    private func labeledValue(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func modelLabel(_ model: String) -> String {
+        switch model {
+        case "claude-haiku-4-5": return "Haiku 4.5 (fast)"
+        case "claude-sonnet-4-5": return "Sonnet 4.5"
+        case "claude-sonnet-4-6": return "Sonnet 4.6"
+        case "claude-opus-4-7": return "Opus 4.7"
+        case "claude-opus-4-8": return "Opus 4.8"
+        default: return model
         }
     }
 }

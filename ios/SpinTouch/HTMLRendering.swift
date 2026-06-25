@@ -1,10 +1,12 @@
 import SwiftUI
 import WebKit
 
-/// Minimal, dependency-free Markdown → HTML conversion for the AI read.
+/// Minimal, dependency-free markup helpers for the AI read: sanitizes the HTML
+/// Claude emits, converts Markdown → HTML as a fallback, projects HTML → plain
+/// text for the streaming preview, and wraps it all in our styled CSS document.
 /// Handles the subset Claude emits here: headings, bold/italic/code, links,
-/// ordered/unordered lists, horizontal rules, and paragraphs.
-enum Markdown {
+/// ordered/unordered lists, tables, horizontal rules, and paragraphs.
+enum Markup {
     /// Build a full styled HTML document from the AI response. If the response
     /// already looks like HTML, sanitize and use it directly; otherwise treat it
     /// as Markdown and convert. Either way it's wrapped in our CSS document.
@@ -198,6 +200,76 @@ struct HTMLView: UIViewRepresentable {
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             // Allow the initial loadHTMLString; send any tapped links to Safari.
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               url.scheme == "http" || url.scheme == "https" {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+    }
+}
+
+/// Like `HTMLView`, but sizes itself to its content (no inner scrolling) so it
+/// can sit inline within a scrolling SwiftUI layout. The measured content height
+/// is reported back through `height`.
+struct InlineHTMLView: UIViewRepresentable {
+    let html: String
+    @Binding var height: CGFloat
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        context.coordinator.observe(webView.scrollView)
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard context.coordinator.loadedHTML != html else { return }
+        context.coordinator.loadedHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
+    }
+
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        private let parent: InlineHTMLView
+        var loadedHTML: String?
+        private var observation: NSKeyValueObservation?
+
+        init(_ parent: InlineHTMLView) { self.parent = parent }
+
+        func observe(_ scrollView: UIScrollView) {
+            // The content's intrinsic height lands in the scroll view's
+            // contentSize once layout settles; mirror it into the binding.
+            observation = scrollView.observe(\.contentSize, options: [.new]) { [weak self] sv, _ in
+                guard let self else { return }
+                let measured = sv.contentSize.height
+                guard measured > 0 else { return }
+                DispatchQueue.main.async {
+                    if abs(self.parent.height - measured) > 0.5 { self.parent.height = measured }
+                }
+            }
+        }
+
+        func stopObserving() { observation?.invalidate(); observation = nil }
+
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url,
                url.scheme == "http" || url.scheme == "https" {
