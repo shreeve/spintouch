@@ -16,7 +16,7 @@ struct ContentView: View {
     @State private var selectedKey: String?       // identityKey of the displayed stored reading
     @State private var editTemp = ""
     @State private var editDate = Date()
-    @FocusState private var tempFocused: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
     private static let lastViewedKeyDefault = "lastViewedKey"
 
@@ -54,9 +54,10 @@ struct ContentView: View {
             .scrollDismissesKeyboard(.interactively)
             .onAppear { restoreSelection() }
             .onChange(of: ble.reading?.receivedAt) { _, _ in handleScan() }
-            .onChange(of: editTemp) { _, _ in pushConditions() }
-            .onChange(of: editDate) { _, _ in pushConditions() }
-            .onChange(of: aiExpanded) { _, expanded in if expanded { onAIExpand() } }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { store.flush(); aiReader.flushCache() }
+            }
+            .onChange(of: aiExpanded) { _, expanded in expanded ? onAIExpand() : aiReader.cancel() }
             .onChange(of: selectedKey) { _, _ in refreshAIIfExpanded() }
             .onChange(of: settings.poolType) { _, _ in refreshAIIfExpanded() }
             .onChange(of: settings.poolVolumeGallons) { _, _ in refreshAIIfExpanded() }
@@ -73,17 +74,13 @@ struct ContentView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showLog.toggle() } label: { Image(systemName: "doc.text.magnifyingglass") }
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { tempFocused = false }
-                }
             }
             .sheet(isPresented: $showLog) { logSheet }
             .sheet(isPresented: $showTrends) { TrendsView(store: store) }
             .sheet(isPresented: $showSettings) {
                 SettingsView(settings: settings, onClearAICache: { aiReader.clearCache() })
             }
-            .sheet(isPresented: $showConditionsEditor) {
+            .sheet(isPresented: $showConditionsEditor, onDismiss: pushConditions) {
                 ConditionsEditorView(temp: $editTemp, date: $editDate)
             }
             .alert("AI Read", isPresented: $showAIDisclosure) {
@@ -590,37 +587,6 @@ struct ContentView: View {
         return editDate.formatted(date: .abbreviated, time: .shortened)
     }
 
-    // MARK: - Conditions (temperature + collection date)
-
-    private var conditionsCard: some View {
-        VStack(spacing: Layout.sectionGap) {
-            HStack {
-                Label("Water Temp", systemImage: "thermometer.medium")
-                    .frame(width: Layout.conditionsLabelWidth, alignment: .leading)
-                Spacer()
-                TextField("—", text: $editTemp)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 60)
-                    .focused($tempFocused)
-                Text("°F").foregroundStyle(.secondary)
-            }
-            Divider()
-            HStack {
-                Label("Collected", systemImage: "calendar.badge.clock")
-                    .frame(width: Layout.conditionsLabelWidth, alignment: .leading)
-                Spacer()
-                DatePicker("", selection: $editDate)
-                    .labelsHidden()
-            }
-                .font(.subheadline)
-        }
-        .font(.subheadline)
-        .padding(Layout.cardPadding)
-        .frame(maxWidth: .infinity)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-
     private func metadataCard(_ reading: SpinTouchReading) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             metaRow("Disk series", reading.diskSeries ?? "—")
@@ -693,7 +659,7 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
             .disabled(ble.phase.isBusy)
 
-            if ble.phase.isBusy || ble.deviceName != nil {
+            if ble.phase.isBusy || ble.isConnected {
                 Button(role: .cancel) {
                     ble.disconnect()
                 } label: {
@@ -900,7 +866,6 @@ private enum Layout {
     static let rowGap: CGFloat = 6
     static let cardPadding: CGFloat = 16
     static let rowVerticalPadding: CGFloat = 2
-    static let conditionsLabelWidth: CGFloat = 150
     static let pagePadding: CGFloat = 20
     static let pageVerticalPadding: CGFloat = 12
     static let bottomBarPadding: CGFloat = 28
