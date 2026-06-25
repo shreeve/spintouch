@@ -41,6 +41,7 @@ final class BLEManager: NSObject, ObservableObject {
     @Published private(set) var phase: ConnectionPhase = .idle
     @Published private(set) var reading: SpinTouchReading?
     @Published private(set) var deviceName: String?
+    @Published private(set) var isConnected = false
     @Published private(set) var log: [String] = []
 
     private var central: CBCentralManager!
@@ -66,6 +67,10 @@ final class BLEManager: NSObject, ObservableObject {
     func startScan() {
         autoDisconnectTask?.cancel()
         reading = nil
+        // Drop any lingering connection (e.g. the post-reading auto-disconnect
+        // window) before rescanning, otherwise didDiscover ignores everything
+        // while we still hold a peripheral and the scan times out.
+        if peripheral != nil { resetConnectionState() }
         switch central.state {
         case .poweredOn:
             beginScan()
@@ -80,7 +85,6 @@ final class BLEManager: NSObject, ObservableObject {
 
     func disconnect() {
         autoDisconnectTask?.cancel()
-        if let p = peripheral { central.cancelPeripheralConnection(p) }
         resetConnectionState()
         phase = .idle
     }
@@ -100,13 +104,19 @@ final class BLEManager: NSObject, ObservableObject {
                      "Couldn't find or connect to a SpinTouch. Make sure it's on a results screen and the LaMotte app is closed.")
     }
 
-    /// Clear all connection references (used on terminal failures so a later scan
-    /// can connect again). Also stops scanning and cancels the connect timeout.
+    /// Tear down the current connection (used on terminal failures and before a
+    /// rescan) so a later scan can connect again. Cancels any live peripheral
+    /// connection — not just the local reference — so iOS doesn't stay connected
+    /// to the SpinTouch and block its own UI / the LaMotte app. Also stops
+    /// scanning, cancels the connect timeout, and clears connection state.
     private func resetConnectionState() {
         cancelTimeout()
         central.stopScan()
+        if let p = peripheral { central.cancelPeripheralConnection(p) }
         peripheral = nil
         dataChar = nil; ackChar = nil; statusChar = nil
+        deviceName = nil
+        isConnected = false
     }
 
     /// True if the callback's peripheral is the one we're currently working with.
@@ -122,7 +132,6 @@ final class BLEManager: NSObject, ObservableObject {
             switch self.phase {
             case .scanning, .connecting, .discovering, .reading:
                 self.addLog("Timed out")
-                if let p = self.peripheral { self.central.cancelPeripheralConnection(p) }
                 self.resetConnectionState()
                 self.phase = .failed(message)
             default:
@@ -209,6 +218,7 @@ extension BLEManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
             guard isCurrent(peripheral) else { return }
+            isConnected = true
             addLog("Connected — discovering services")
             phase = .discovering
             peripheral.discoverServices([SpinTouchUUID.service])
@@ -233,6 +243,8 @@ extension BLEManager: CBCentralManagerDelegate {
             addLog("Disconnected")
             self.peripheral = nil
             self.dataChar = nil; self.ackChar = nil; self.statusChar = nil
+            self.isConnected = false
+            self.deviceName = nil
             cancelTimeout()
             if case .gotReading = phase {
                 // Keep showing results.
