@@ -24,8 +24,12 @@ struct ParameterValue: Identifiable {
 
     var formattedValue: String {
         // Honest, consistent per-metric precision (full precision is retained
-        // internally for calculations like LSI / combined chlorine).
-        MetricCatalog.format(value, key: spec.key)
+        // internally for calculations like LSI / combined chlorine). Fall back
+        // to the parsed/spec precision for any key the catalog doesn't list.
+        if MetricCatalog.info(spec.key) != nil {
+            return MetricCatalog.format(value, key: spec.key)
+        }
+        return String(format: "%.\(max(0, decimals))f", value)
     }
 
     var displayUnit: String { spec.unit ?? "" }
