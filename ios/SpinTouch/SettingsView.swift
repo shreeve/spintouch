@@ -106,9 +106,7 @@ struct SettingsView: View {
     private func modelLabel(_ model: String) -> String {
         switch model {
         case "claude-haiku-4-5": return "Haiku 4.5 (fast)"
-        case "claude-sonnet-4-5": return "Sonnet 4.5"
         case "claude-sonnet-4-6": return "Sonnet 4.6"
-        case "claude-opus-4-7": return "Opus 4.7"
         case "claude-opus-4-8": return "Opus 4.8"
         default: return model
         }

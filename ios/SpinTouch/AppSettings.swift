@@ -21,9 +21,7 @@ final class AppSettings: ObservableObject {
     static let poolTypeOptions = ["Chlorine", "Saltwater", "Bromine", "Biguanide", "Other"]
     static let modelOptions = [
         "claude-haiku-4-5",
-        "claude-sonnet-4-5",
         "claude-sonnet-4-6",
-        "claude-opus-4-7",
         "claude-opus-4-8",
     ]
 
@@ -46,6 +44,8 @@ final class AppSettings: ObservableObject {
             if model == "claude-sonnet-4-5" { model = Self.defaultModel }
             d.set(true, forKey: "didMigrateModelDefault")
         }
+        // Fall back to the default if a previously-selected model is no longer offered.
+        if !Self.modelOptions.contains(model) { model = Self.defaultModel }
         // Re-save a legacy (serviceless) key under the new service-scoped item.
         if !apiKey.isEmpty { Keychain.set(apiKey, for: Self.keyKeychain) }
     }
