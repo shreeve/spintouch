@@ -36,22 +36,46 @@ enum Markup {
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Treat model HTML as untrusted: strip scripts, dangerous tags, inline
-    /// event handlers, and unsafe URL schemes. Combined with a strict CSP and
-    /// JavaScript disabled in the web view, this is defense-in-depth.
+    /// Tags we render. Everything else is dropped (its text content is kept).
+    private static let allowedTags: Set<String> = [
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr",
+        "ul", "ol", "li", "strong", "em", "b", "i", "code", "pre", "blockquote",
+        "table", "thead", "tbody", "tfoot", "tr", "th", "td", "a",
+    ]
+
+    /// Treat model HTML as untrusted. Rather than blocklisting dangerous bits,
+    /// rebuild the markup from an allowlist: drop comments and script/style
+    /// blocks entirely, remove any tag not in `allowedTags`, and strip every
+    /// attribute except a safe http(s) `href` on `<a>`. Combined with the strict
+    /// CSP and JavaScript-disabled web view, this is defense-in-depth.
     private static func sanitize(_ html: String) -> String {
         var s = html
-        // Remove dangerous tags entirely (with their content where it matters).
+        // Drop comments and the full content of script/style blocks.
+        s = s.replacing(/(?s)<!--.*?-->/) { _ in "" }
         s = s.replacing(/(?is)<\s*(script|style)\b[\s\S]*?<\s*\/\s*\1\s*>/) { _ in "" }
-        s = s.replacing(/(?is)<\s*\/?\s*(script|style|iframe|object|embed|form|meta|link|base|svg|audio|video|source)\b[^>]*>/) { _ in "" }
-        // Inline event handlers (onload=, onclick=, ...).
-        s = s.replacing(/(?i)\son[a-z]+\s*=\s*"[^"]*"/) { _ in "" }
-        s = s.replacing(/(?i)\son[a-z]+\s*=\s*'[^']*'/) { _ in "" }
-        s = s.replacing(/(?i)\son[a-z]+\s*=\s*[^\s>]+/) { _ in "" }
-        // Unsafe URL schemes in any href/src attribute.
-        s = s.replacing(/(?i)\s(href|src)\s*=\s*"\s*(javascript|data|file|vbscript):[^"]*"/) { _ in "" }
-        s = s.replacing(/(?i)\s(href|src)\s*=\s*'\s*(javascript|data|file|vbscript):[^']*'/) { _ in "" }
+        // Rewrite each remaining tag against the allowlist, dropping attributes.
+        s = s.replacing(/(?s)<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/) { match in
+            let isClosing = match.output.1 == "/"
+            let tag = match.output.2.lowercased()
+            guard allowedTags.contains(tag) else { return "" }
+            if isClosing { return "</\(tag)>" }
+            if tag == "a", let href = safeHref(String(match.output.3)) {
+                return "<a href=\"\(href)\">"
+            }
+            return "<\(tag)>"
+        }
         return s
+    }
+
+    /// Extract an `href` value only if it's an http(s) URL; otherwise nil.
+    private static func safeHref(_ attributes: String) -> String? {
+        guard let m = attributes.firstMatch(
+            of: /(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/) else { return nil }
+        let raw = String(m.output.1 ?? m.output.2 ?? m.output.3 ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = raw.lowercased()
+        guard lower.hasPrefix("http://") || lower.hasPrefix("https://") else { return nil }
+        return raw.replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private static func body(from markdown: String) -> String {
@@ -219,7 +243,7 @@ struct InlineHTMLView: UIViewRepresentable {
     let html: String
     @Binding var height: CGFloat
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeCoordinator() -> Coordinator { Coordinator(setHeight: { height = $0 }) }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -236,6 +260,9 @@ struct InlineHTMLView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        // Refresh the setter each update so it always writes the *current*
+        // binding, not a stale one captured when the coordinator was created.
+        context.coordinator.setHeight = { height = $0 }
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
         webView.loadHTMLString(html, baseURL: nil)
@@ -246,26 +273,35 @@ struct InlineHTMLView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        private let parent: InlineHTMLView
         var loadedHTML: String?
+        var setHeight: (CGFloat) -> Void
         private var observation: NSKeyValueObservation?
+        private var isActive = true
+        private var lastHeight: CGFloat = 0
 
-        init(_ parent: InlineHTMLView) { self.parent = parent }
+        init(setHeight: @escaping (CGFloat) -> Void) { self.setHeight = setHeight }
 
         func observe(_ scrollView: UIScrollView) {
             // The content's intrinsic height lands in the scroll view's
             // contentSize once layout settles; mirror it into the binding.
             observation = scrollView.observe(\.contentSize, options: [.new]) { [weak self] sv, _ in
-                guard let self else { return }
                 let measured = sv.contentSize.height
                 guard measured > 0 else { return }
-                DispatchQueue.main.async {
-                    if abs(self.parent.height - measured) > 0.5 { self.parent.height = measured }
+                Task { @MainActor [weak self] in
+                    guard let self, self.isActive else { return }
+                    if abs(self.lastHeight - measured) > 0.5 {
+                        self.lastHeight = measured
+                        self.setHeight(measured)
+                    }
                 }
             }
         }
 
-        func stopObserving() { observation?.invalidate(); observation = nil }
+        func stopObserving() {
+            isActive = false
+            observation?.invalidate()
+            observation = nil
+        }
 
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
