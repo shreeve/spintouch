@@ -26,6 +26,7 @@ final class AIReader: ObservableObject {
     private let cache = AIReadCache()
 
     func clearCache() { cache.clear() }
+    func flushCache() { cache.flush() }
     var cacheCount: Int { cache.count }
 
     var isLoading: Bool {
@@ -38,18 +39,31 @@ final class AIReader: ObservableObject {
     /// Start a read, cancelling any in-flight one (frees its network/tokens).
     func start(reading: SpinTouchReading, settings: AppSettings, collectionDate: Date, tempF: Double?) {
         runTask?.cancel()
+        // Claim the request ID synchronously so any token/state from the
+        // just-cancelled task is rejected by its `currentRequestID` guard.
+        let requestID = UUID()
+        currentRequestID = requestID
         runTask = Task { [weak self] in
-            await self?.run(reading: reading, settings: settings, collectionDate: collectionDate, tempF: tempF)
+            await self?.run(requestID: requestID, reading: reading, settings: settings,
+                            collectionDate: collectionDate, tempF: tempF)
         }
     }
 
-    private func run(reading: SpinTouchReading, settings: AppSettings, collectionDate: Date, tempF: Double?) async {
+    /// Cancel an in-flight read (e.g. the AI section was collapsed or left).
+    /// A completed `.done` result is preserved so re-expanding shows it instantly.
+    func cancel() {
+        runTask?.cancel()
+        runTask = nil
+        currentRequestID = UUID()
+        if isLoading { state = .idle }
+    }
+
+    private func run(requestID: UUID, reading: SpinTouchReading, settings: AppSettings, collectionDate: Date, tempF: Double?) async {
         guard settings.hasAPIKey else {
             state = .failed("Add your Anthropic API key in Settings first.")
             return
         }
-        let requestID = UUID()
-        currentRequestID = requestID
+        guard currentRequestID == requestID else { return }
 
         // Snapshot everything off the main-actor-isolated settings here.
         let apiKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
