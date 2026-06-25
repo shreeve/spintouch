@@ -56,21 +56,29 @@ final class AIReadCache {
         save()
     }
 
+    func flush() { persistQueue.sync {} }
+
     private func load() {
         guard let data = try? Data(contentsOf: fileURL) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        entries = (try? decoder.decode([Entry].self, from: data)) ?? []
+        // Sort by recency so LRU eviction (removeFirst) is correct regardless of
+        // the on-disk order.
+        entries = ((try? decoder.decode([Entry].self, from: data)) ?? [])
+            .sorted { $0.date < $1.date }
     }
 
     private func save() {
         let snapshot = entries
         let url = fileURL
         persistQueue.async {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            if let data = try? encoder.encode(snapshot) {
-                try? data.write(to: url, options: .atomic)
+            do {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(snapshot)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                NSLog("AIReadCache save failed: \(error)")
             }
         }
     }
