@@ -13,7 +13,7 @@ enum Markup {
     static func html(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let looksHTML = trimmed.range(
-            of: #"<(h[1-6]|p|ul|ol|li|table|strong|em|div|br)\b"#,
+            of: #"<(h[1-6]|p|ul|ol|li|table|strong|em|div|br|a)\b"#,
             options: [.regularExpression, .caseInsensitive]) != nil
         let inner = looksHTML ? sanitize(trimmed) : body(from: trimmed)
         return document(body: inner)
