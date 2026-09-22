@@ -60,7 +60,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Model")
                 } footer: {
-                    Text("Haiku is fastest and cheapest. Sonnet is a stronger default if you want richer explanations. Opus is highest quality but slower and more expensive.")
+                    Text("Haiku 4.5 is fastest and cheapest. Sonnet 5 gives richer explanations at moderate cost. Opus 5 is highest quality but slower and more expensive.")
                 }
 
                 Section {
@@ -110,14 +110,17 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
+                // Let the value keep its full width; the short label yields first.
+                .layoutPriority(1)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func modelLabel(_ model: String) -> String {
         switch model {
         case "claude-haiku-4-5": return "Haiku 4.5 (fast)"
-        case "claude-sonnet-4-6": return "Sonnet 4.6"
-        case "claude-opus-4-8": return "Opus 4.8"
+        case "claude-sonnet-5": return "Sonnet 5"
+        case "claude-opus-5": return "Opus 5"
         default: return model
         }
     }
