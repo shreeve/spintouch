@@ -137,7 +137,9 @@ enum AnthropicService {
                     req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
                     req.httpBody = try JSONSerialization.data(withJSONObject: [
                         "model": model,
-                        "max_tokens": 900,
+                        // Opus 5 and Sonnet 5 think before answering and those tokens
+                        // count against this cap, so leave room beyond the HTML itself.
+                        "max_tokens": 4096,
                         "stream": true,
                         "system": system,
                         "messages": [["role": "user", "content": user]],
